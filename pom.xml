@@ -9,6 +9,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>22</maven.compiler.source>
         <maven.compiler.target>22</maven.compiler.target>
+        <maven.compiler.release>22</maven.compiler.release>
         <exec.mainClass>ve.edu.unimet.so.project2.project2os.Project2OS</exec.mainClass>
     </properties>
     <build>
