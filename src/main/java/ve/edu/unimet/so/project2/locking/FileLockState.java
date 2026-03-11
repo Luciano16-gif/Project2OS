@@ -41,12 +41,20 @@ final class FileLockState {
         return waitingQueue.size();
     }
 
+    int getPendingGrantCount() {
+        return pendingGrants.size();
+    }
+
     Object[] getActiveLocksSnapshot() {
         return activeLocks.toArray();
     }
 
     Object[] getWaitingQueueSnapshot() {
         return waitingQueue.toArray();
+    }
+
+    Object[] getPendingGrantSnapshot() {
+        return pendingGrants.toArray();
     }
 
     LockAcquireResult tryAcquire(String processId, LockType requestedLockType) {
@@ -63,7 +71,8 @@ final class FileLockState {
                         fileId,
                         processId,
                         requestedLockType,
-                        null);
+                        null,
+                        new SimpleList<>());
             }
             throw new IllegalStateException("lock upgrades or downgrades are not supported");
         }
@@ -75,12 +84,17 @@ final class FileLockState {
             }
             pendingGrants.removeFirst(pendingGrant);
             activeLocks.add(new FileLock(fileId, requestedLockType, processId));
+            SimpleList<LockWaitEntry> awakenedEntries = new SimpleList<>();
+            if (requestedLockType == LockType.SHARED) {
+                awakenedEntries = collectAwakenedEntries(true);
+            }
             return new LockAcquireResult(
                     LockAcquireDecision.GRANTED,
                     fileId,
                     processId,
                     requestedLockType,
-                    null);
+                    null,
+                    awakenedEntries);
         }
 
         if (findWaitingEntryByProcess(processId) != null) {
@@ -89,11 +103,12 @@ final class FileLockState {
                     fileId,
                     processId,
                     requestedLockType,
-                    findBlockingProcessIdForQueue(processId));
+                    findBlockingProcessIdForQueuedRequester(processId),
+                    new SimpleList<>());
         }
 
-        if (hasWaitingEntries()) {
-            return enqueueBlocked(processId, requestedLockType, findBlockingProcessIdForQueue(processId));
+        if (shouldBlockBehindQueueOrPendingGrants(requestedLockType)) {
+            return enqueueBlocked(processId, requestedLockType, findBlockingProcessIdForNewArrival(processId));
         }
 
         if (canGrantImmediately(requestedLockType)) {
@@ -103,10 +118,11 @@ final class FileLockState {
                     fileId,
                     processId,
                     requestedLockType,
-                    null);
+                    null,
+                    new SimpleList<>());
         }
 
-        return enqueueBlocked(processId, requestedLockType, findBlockingProcessIdForQueue(processId));
+        return enqueueBlocked(processId, requestedLockType, findBlockingProcessIdForNewArrival(processId));
     }
 
     LockReleaseResult releaseByProcess(String processId) {
@@ -117,7 +133,11 @@ final class FileLockState {
         boolean removedWaiting = removeWaitingEntryByOwner(processId);
         SimpleList<LockWaitEntry> awakenedEntries = collectAwakenedEntries(released || removedPending || removedWaiting);
 
-        return new LockReleaseResult(fileId, processId, released, awakenedEntries);
+        return new LockReleaseResult(
+                fileId,
+                processId,
+                released || removedPending || removedWaiting,
+                awakenedEntries);
     }
 
     private LockAcquireResult enqueueBlocked(String processId, LockType requestedLockType, String blockingProcessId) {
@@ -129,7 +149,8 @@ final class FileLockState {
                 fileId,
                 processId,
                 requestedLockType,
-                blockingProcessId);
+                blockingProcessId,
+                new SimpleList<>());
     }
 
     private boolean canGrantImmediately(LockType requestedLockType) {
@@ -142,6 +163,14 @@ final class FileLockState {
         }
 
         return false;
+    }
+
+    private boolean shouldBlockBehindQueueOrPendingGrants(LockType requestedLockType) {
+        if (hasPendingGrants()) {
+            return true;
+        }
+
+        return hasWaitingEntries();
     }
 
     private boolean hasExclusiveReservation() {
@@ -196,25 +225,82 @@ final class FileLockState {
         return activeLocks.get(0).getOwnerProcessId();
     }
 
-    private String findBlockingProcessIdForQueue(String requesterProcessId) {
-        if (!pendingGrants.isEmpty()) {
-            for (int i = 0; i < pendingGrants.size(); i++) {
-                String pendingOwner = pendingGrants.get(i).getProcessId();
-                if (!pendingOwner.equals(requesterProcessId)) {
-                    return pendingOwner;
-                }
-            }
+    private String findBlockingProcessIdForQueuedRequester(String requesterProcessId) {
+        String olderPendingGrant = findOlderPendingGrantProcessId(requesterProcessId);
+        if (olderPendingGrant != null) {
+            return olderPendingGrant;
         }
 
+        String earlierQueuedProcess = findEarlierQueuedProcessId(requesterProcessId);
+        if (earlierQueuedProcess != null) {
+            return earlierQueuedProcess;
+        }
+
+        String activeOwner = findBlockingOwnerProcessId();
+        if (activeOwner != null && !activeOwner.equals(requesterProcessId)) {
+            return activeOwner;
+        }
+
+        return findNonRequesterPendingGrantProcessId(requesterProcessId);
+    }
+
+    private String findBlockingProcessIdForNewArrival(String requesterProcessId) {
+        String pendingOwner = findNonRequesterPendingGrantProcessId(requesterProcessId);
+        if (pendingOwner != null) {
+            return pendingOwner;
+        }
+
+        String queuedOwner = findFirstQueuedProcessId();
+        if (queuedOwner != null && !queuedOwner.equals(requesterProcessId)) {
+            return queuedOwner;
+        }
+
+        String activeOwner = findBlockingOwnerProcessId();
+        if (activeOwner != null && !activeOwner.equals(requesterProcessId)) {
+            return activeOwner;
+        }
+
+        return null;
+    }
+
+    private String findOlderPendingGrantProcessId(String requesterProcessId) {
+        for (int i = 0; i < pendingGrants.size(); i++) {
+            String pendingOwner = pendingGrants.get(i).getProcessId();
+            if (pendingOwner.equals(requesterProcessId)) {
+                return null;
+            }
+            return pendingOwner;
+        }
+        return null;
+    }
+
+    private String findNonRequesterPendingGrantProcessId(String requesterProcessId) {
+        for (int i = 0; i < pendingGrants.size(); i++) {
+            String pendingOwner = pendingGrants.get(i).getProcessId();
+            if (!pendingOwner.equals(requesterProcessId)) {
+                return pendingOwner;
+            }
+        }
+        return null;
+    }
+
+    private String findEarlierQueuedProcessId(String requesterProcessId) {
         Object[] queueSnapshot = waitingQueue.toArray();
         for (Object item : queueSnapshot) {
             LockWaitEntry entry = (LockWaitEntry) item;
-            if (!entry.getProcessId().equals(requesterProcessId)) {
-                return entry.getProcessId();
+            if (entry.getProcessId().equals(requesterProcessId)) {
+                return null;
             }
+            return entry.getProcessId();
         }
+        return null;
+    }
 
-        return findBlockingOwnerProcessId();
+    private String findFirstQueuedProcessId() {
+        if (!hasWaitingEntries()) {
+            return null;
+        }
+        return waitingQueue.peek().getProcessId();
     }
 
     private boolean removeActiveLocksByOwner(String processId) {

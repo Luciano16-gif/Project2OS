@@ -11,6 +11,11 @@ public class LockTable {
     }
 
     public LockAcquireResult tryAcquire(String fileId, String processId, LockType requestedLockType) {
+        requireNonBlank(fileId, "fileId");
+        requireNonBlank(processId, "processId");
+        if (requestedLockType == null) {
+            throw new IllegalArgumentException("requestedLockType cannot be null");
+        }
         FileLockState state = getOrCreateState(fileId);
         return state.tryAcquire(processId, requestedLockType);
     }
@@ -46,6 +51,11 @@ public class LockTable {
         return state == null ? 0 : state.getWaitingCount();
     }
 
+    public int getPendingGrantCount(String fileId) {
+        FileLockState state = findState(fileId);
+        return state == null ? 0 : state.getPendingGrantCount();
+    }
+
     public Object[] getActiveLocksSnapshot(String fileId) {
         FileLockState state = findState(fileId);
         return state == null ? new Object[0] : state.getActiveLocksSnapshot();
@@ -54,6 +64,11 @@ public class LockTable {
     public Object[] getWaitingQueueSnapshot(String fileId) {
         FileLockState state = findState(fileId);
         return state == null ? new Object[0] : state.getWaitingQueueSnapshot();
+    }
+
+    public Object[] getPendingGrantSnapshot(String fileId) {
+        FileLockState state = findState(fileId);
+        return state == null ? new Object[0] : state.getPendingGrantSnapshot();
     }
 
     public void clear() {

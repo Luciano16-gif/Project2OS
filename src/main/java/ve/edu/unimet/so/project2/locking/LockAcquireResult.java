@@ -1,5 +1,7 @@
 package ve.edu.unimet.so.project2.locking;
 
+import ve.edu.unimet.so.project2.datastructures.SimpleList;
+
 public final class LockAcquireResult {
 
     private final LockAcquireDecision decision;
@@ -7,24 +9,30 @@ public final class LockAcquireResult {
     private final String processId;
     private final LockType requestedLockType;
     private final String blockingProcessId;
+    private final SimpleList<LockWaitEntry> awakenedEntries;
 
     public LockAcquireResult(
             LockAcquireDecision decision,
             String fileId,
             String processId,
             LockType requestedLockType,
-            String blockingProcessId) {
+            String blockingProcessId,
+            SimpleList<LockWaitEntry> awakenedEntries) {
         if (decision == null) {
             throw new IllegalArgumentException("decision cannot be null");
         }
         if (requestedLockType == null) {
             throw new IllegalArgumentException("requestedLockType cannot be null");
         }
+        if (awakenedEntries == null) {
+            throw new IllegalArgumentException("awakenedEntries cannot be null");
+        }
         this.decision = decision;
         this.fileId = requireNonBlank(fileId, "fileId");
         this.processId = requireNonBlank(processId, "processId");
         this.requestedLockType = requestedLockType;
         this.blockingProcessId = normalizeOptional(blockingProcessId);
+        this.awakenedEntries = awakenedEntries;
     }
 
     public LockAcquireDecision getDecision() {
@@ -45,6 +53,18 @@ public final class LockAcquireResult {
 
     public String getBlockingProcessId() {
         return blockingProcessId;
+    }
+
+    public int getAwakenedCount() {
+        return awakenedEntries.size();
+    }
+
+    public LockWaitEntry getAwakenedEntryAt(int index) {
+        return awakenedEntries.get(index);
+    }
+
+    public Object[] getAwakenedEntriesSnapshot() {
+        return awakenedEntries.toArray();
     }
 
     public boolean isGranted() {
