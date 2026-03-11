@@ -4,6 +4,9 @@
 
 package ve.edu.unimet.so.project2.project2os;
 
+import ve.edu.unimet.so.project2.project2os.gui.MainFrame;
+import javax.swing.SwingUtilities;
+
 /**
  *
  * @author chano
@@ -11,6 +14,9 @@ package ve.edu.unimet.so.project2.project2os;
 public class Project2OS {
 
     public static void main(String[] args) {
-        System.out.println("Hello World!");
+        SwingUtilities.invokeLater(() -> {
+            MainFrame frame = new MainFrame();
+            frame.setVisible(true);
+        });
     }
 }
