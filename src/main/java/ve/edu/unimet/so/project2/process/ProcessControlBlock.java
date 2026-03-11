@@ -204,6 +204,9 @@ public class ProcessControlBlock {
         if (waitReason == null || waitReason == WaitReason.NONE) {
             throw new IllegalArgumentException("blocked processes require a concrete waitReason");
         }
+        if (waitReason == WaitReason.WAITING_SCHEDULER) {
+            throw new IllegalArgumentException("blocked processes cannot use WAITING_SCHEDULER");
+        }
         if (state == ProcessState.TERMINATED) {
             throw new IllegalStateException("terminated processes cannot be blocked");
         }

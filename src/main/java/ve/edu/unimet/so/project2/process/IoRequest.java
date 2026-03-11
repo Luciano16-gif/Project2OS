@@ -48,6 +48,7 @@ public final class IoRequest {
         }
 
         validateRequestedSize(operationType, targetNodeType, requestedSizeInBlocks);
+        validateTargetBinding(operationType, this.targetNodeId);
 
         this.operationType = operationType;
         this.targetNodeType = targetNodeType;
@@ -137,6 +138,16 @@ public final class IoRequest {
 
         if (targetNodeType == FsNodeType.DIRECTORY && requestedSizeInBlocks != 0) {
             throw new IllegalArgumentException("CREATE directory requests must use zero requested blocks");
+        }
+    }
+
+    private static void validateTargetBinding(IoOperationType operationType, String targetNodeId) {
+        if (operationType == IoOperationType.CREATE) {
+            return;
+        }
+
+        if (targetNodeId == null) {
+            throw new IllegalArgumentException("non-CREATE requests must reference an existing targetNodeId");
         }
     }
 }
