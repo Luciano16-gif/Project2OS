@@ -107,7 +107,7 @@ final class FileLockState {
                     new SimpleList<>());
         }
 
-        if (shouldBlockBehindQueueOrPendingGrants(requestedLockType)) {
+        if (shouldBlockBehindQueueOrPendingGrants()) {
             return enqueueBlocked(processId, requestedLockType, findBlockingProcessIdForNewArrival(processId));
         }
 
@@ -165,7 +165,7 @@ final class FileLockState {
         return false;
     }
 
-    private boolean shouldBlockBehindQueueOrPendingGrants(LockType requestedLockType) {
+    private boolean shouldBlockBehindQueueOrPendingGrants() {
         if (hasPendingGrants()) {
             return true;
         }
@@ -264,14 +264,12 @@ final class FileLockState {
     }
 
     private String findOlderPendingGrantProcessId(String requesterProcessId) {
-        for (int i = 0; i < pendingGrants.size(); i++) {
-            String pendingOwner = pendingGrants.get(i).getProcessId();
-            if (pendingOwner.equals(requesterProcessId)) {
-                return null;
-            }
-            return pendingOwner;
+        if (pendingGrants.isEmpty()) {
+            return null;
         }
-        return null;
+
+        String firstPendingOwner = pendingGrants.get(0).getProcessId();
+        return firstPendingOwner.equals(requesterProcessId) ? null : firstPendingOwner;
     }
 
     private String findNonRequesterPendingGrantProcessId(String requesterProcessId) {
