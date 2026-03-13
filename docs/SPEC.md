@@ -1687,7 +1687,7 @@ Objetivo:
 
 ## 12. Permisos y modos de usuario
 
-Esta seccion fija la politica provisional de permisos vigente para la implementacion actual.
+Esta seccion fija la politica de permisos vigente para la implementacion actual.
 
 ### 12.1 Modo administrador
 
@@ -1697,27 +1697,24 @@ Decision base:
 
 ### 12.2 Modo usuario
 
-Asuncion provisional de implementacion:
+Decision confirmada:
 
 - `USER` puede ejecutar operaciones completas sobre recursos propios,
 - `USER` puede leer recursos externos solo cuando sean publicos o legibles segun la politica aplicada,
 - `USER` no puede modificar recursos de otros usuarios,
 - `USER` no puede modificar archivos del sistema.
 
-Interpretacion operativa provisional:
+Interpretacion operativa:
 
 - sobre archivos propios, `USER` puede hacer `CREATE`, `READ`, `UPDATE` y `DELETE`,
 - sobre archivos ajenos, `USER` queda limitado a lectura cuando corresponda,
 - sobre archivos del sistema, `USER` no puede hacer operaciones modificadoras.
 
-Justificacion de la asuncion:
+Justificacion:
 
 - cuando el enunciado resume que el modo usuario es "solo lectura", esa restriccion debe entenderse respecto a recursos ajenos o del sistema,
-- esa frase no invalida la capacidad del usuario de operar completamente sobre sus propios recursos dentro del simulador.
-
-Nota de cierre pendiente:
-
-- esta interpretacion debe considerarse provisional hasta que la preparadora confirme explicitamente el alcance esperado del modo `USER`.
+- esa frase no invalida la capacidad del usuario de operar completamente sobre sus propios recursos dentro del simulador,
+- esta interpretacion fue confirmada externamente por la preparadora durante la fase de aclaratorias.
 
 ## 13. Validaciones de entrada y manejo de errores
 
