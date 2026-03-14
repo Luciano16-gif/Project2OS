@@ -1,5 +1,15 @@
 package ve.edu.unimet.so.project2.coordinator.core;
 
+import ve.edu.unimet.so.project2.application.ApplicationIntentPlanner;
+import ve.edu.unimet.so.project2.application.ApplicationOperationIntent;
+import ve.edu.unimet.so.project2.application.CreateDirectoryIntent;
+import ve.edu.unimet.so.project2.application.CreateFileIntent;
+import ve.edu.unimet.so.project2.application.DeleteIntent;
+import ve.edu.unimet.so.project2.application.PermissionService;
+import ve.edu.unimet.so.project2.application.ReadIntent;
+import ve.edu.unimet.so.project2.application.RenameIntent;
+import ve.edu.unimet.so.project2.application.SimulationApplicationState;
+import ve.edu.unimet.so.project2.application.SwitchSessionIntent;
 import ve.edu.unimet.so.project2.coordinator.channel.CoordinatorChannels;
 import ve.edu.unimet.so.project2.coordinator.channel.DiskServiceResult;
 import ve.edu.unimet.so.project2.coordinator.channel.DiskTask;
@@ -8,11 +18,16 @@ import ve.edu.unimet.so.project2.coordinator.snapshot.SimulationSnapshot;
 import ve.edu.unimet.so.project2.coordinator.snapshot.SimulationSnapshotFactory;
 import ve.edu.unimet.so.project2.coordinator.state.CoordinatorProcessStore;
 import ve.edu.unimet.so.project2.coordinator.state.ProcessExecutionContext;
+import ve.edu.unimet.so.project2.datastructures.LinkedQueue;
+import ve.edu.unimet.so.project2.disk.DiskBlock;
 import ve.edu.unimet.so.project2.disk.DiskHead;
 import ve.edu.unimet.so.project2.disk.DiskHeadDirection;
 import ve.edu.unimet.so.project2.disk.SimulatedDisk;
+import ve.edu.unimet.so.project2.filesystem.FileNode;
+import ve.edu.unimet.so.project2.filesystem.FsNode;
 import ve.edu.unimet.so.project2.journal.JournalEntry;
 import ve.edu.unimet.so.project2.journal.JournalManager;
+import ve.edu.unimet.so.project2.journal.undo.CreateFileUndoData;
 import ve.edu.unimet.so.project2.locking.LockAcquireResult;
 import ve.edu.unimet.so.project2.locking.LockReleaseResult;
 import ve.edu.unimet.so.project2.locking.LockWaitEntry;
@@ -34,12 +49,17 @@ public final class SimulationCoordinator {
     private final CoordinatorChannels channels;
     private final CoordinatorProcessStore processStore;
     private final SimulationSnapshotFactory snapshotFactory;
+    private final SimulationApplicationState applicationState;
+    private final ApplicationIntentPlanner applicationIntentPlanner;
+    private final LinkedQueue<PendingSubmission> pendingSubmissions;
 
     private volatile SimulationSnapshot latestSnapshot;
 
     private DiskSchedulingPolicy activePolicy;
     private long nextArrivalOrder;
     private long nextTick;
+    private long nextRequestNumber;
+    private long nextProcessNumber;
     private int totalSeekDistance;
     private int activeDiskTasks;
     private int maxConcurrentDiskTasksObserved;
@@ -55,6 +75,15 @@ public final class SimulationCoordinator {
             LockTable lockTable,
             JournalManager journalManager,
             DiskSchedulingPolicy initialPolicy) {
+        this(disk, lockTable, journalManager, initialPolicy, SimulationApplicationState.createDefault());
+    }
+
+    public SimulationCoordinator(
+            SimulatedDisk disk,
+            LockTable lockTable,
+            JournalManager journalManager,
+            DiskSchedulingPolicy initialPolicy,
+            SimulationApplicationState applicationState) {
         if (disk == null) {
             throw new IllegalArgumentException("disk cannot be null");
         }
@@ -67,16 +96,28 @@ public final class SimulationCoordinator {
         if (initialPolicy == null) {
             throw new IllegalArgumentException("initialPolicy cannot be null");
         }
-        this.disk = disk;
+        if (applicationState == null) {
+            throw new IllegalArgumentException("applicationState cannot be null");
+        }
+        this.disk = copyDisk(disk);
         this.lockTable = lockTable;
         this.journalManager = journalManager;
         this.diskScheduler = new DiskScheduler();
         this.channels = new CoordinatorChannels();
         this.processStore = new CoordinatorProcessStore();
         this.snapshotFactory = new SimulationSnapshotFactory();
+        this.applicationState = applicationState.deepCopy();
+        synchronizeDiskWithApplicationState();
+        this.applicationIntentPlanner = new ApplicationIntentPlanner(
+                this.applicationState,
+                this.disk,
+                new PermissionService());
+        this.pendingSubmissions = new LinkedQueue<>();
         this.activePolicy = initialPolicy;
         this.nextArrivalOrder = 0L;
         this.nextTick = 0L;
+        this.nextRequestNumber = 1L;
+        this.nextProcessNumber = 1L;
         this.totalSeekDistance = 0;
         this.activeDiskTasks = 0;
         this.maxConcurrentDiskTasksObserved = 0;
@@ -126,6 +167,14 @@ public final class SimulationCoordinator {
         channels.enqueueCommand(new SubmitOperationCoordinatorCommand(command));
     }
 
+    public void submitIntent(ApplicationOperationIntent intent) {
+        if (intent == null) {
+            throw new IllegalArgumentException("intent cannot be null");
+        }
+        requireStartedAndAcceptingCommands();
+        channels.enqueueCommand(new SubmitApplicationIntentCoordinatorCommand(intent));
+    }
+
     public void changePolicy(DiskSchedulingPolicy policy) {
         if (policy == null) {
             throw new IllegalArgumentException("policy cannot be null");
@@ -163,6 +212,10 @@ public final class SimulationCoordinator {
             }
 
             if (reconcileBlockedLockWaiters()) {
+                worked = true;
+            }
+
+            if (materializePendingSubmissions()) {
                 worked = true;
             }
 
@@ -356,6 +409,7 @@ public final class SimulationCoordinator {
         OperationApplyResult applyResult = invokeHandler(context.getCommand(), runningProcess, diskResult);
         completeJournalTransition(context, applyResult);
         releaseProcessLock(runningProcess);
+        releaseReservedBlocksIfNeeded(context);
 
         runningProcess.markTerminated(applyResult.getResultStatus(), nextTick++, applyResult.getErrorMessage());
         processStore.addTerminatedProcess(runningProcess);
@@ -391,6 +445,16 @@ public final class SimulationCoordinator {
         if (applyResult.getResultStatus() == ResultStatus.SUCCESS) {
             journalManager.markCommitted(context.getTransactionId());
         }
+    }
+
+    private void releaseReservedBlocksIfNeeded(ProcessExecutionContext context) {
+        if (!context.getCommand().requiresJournal()) {
+            return;
+        }
+        if (!(context.getCommand().getPreparedJournalData().getUndoData() instanceof CreateFileUndoData undoData)) {
+            return;
+        }
+        applicationState.releaseReservedBlockIndexes(undoData.getAllocatedBlockIndexesSnapshot());
     }
 
     private void releaseProcessLock(ProcessControlBlock process) {
@@ -465,11 +529,216 @@ public final class SimulationCoordinator {
         latestSnapshot = snapshotFactory.build(
                 activePolicy,
                 disk,
+                applicationState,
                 processStore,
                 lockTable,
                 journalManager,
                 totalSeekDistance,
                 maxConcurrentDiskTasksObserved);
+    }
+
+    private void synchronizeDiskWithApplicationState() {
+        FileNode[] files = getFileSnapshot();
+        boolean[] claimedBlocks = new boolean[disk.getTotalBlocks()];
+        boolean[] reservedFirstBlocks = buildReservedFirstBlocks(files);
+        for (FileNode file : files) {
+            synchronizeFileAllocation(file, claimedBlocks, reservedFirstBlocks);
+        }
+        ensureNoOrphanedOccupiedBlocks(claimedBlocks);
+    }
+
+    private FileNode[] getFileSnapshot() {
+        FsNode[] nodes = applicationState.getFileSystemCatalog().getAllNodesSnapshot();
+        int fileCount = 0;
+        for (FsNode node : nodes) {
+            if (node instanceof FileNode) {
+                fileCount++;
+            }
+        }
+
+        FileNode[] files = new FileNode[fileCount];
+        int index = 0;
+        for (FsNode node : nodes) {
+            if (node instanceof FileNode file) {
+                files[index++] = file;
+            }
+        }
+        return files;
+    }
+
+    private boolean[] buildReservedFirstBlocks(FileNode[] files) {
+        boolean[] reservedFirstBlocks = new boolean[disk.getTotalBlocks()];
+        for (FileNode file : files) {
+            int firstBlockIndex = file.getFirstBlockIndex();
+            if (!disk.isValidIndex(firstBlockIndex)) {
+                throw new IllegalArgumentException("file firstBlockIndex is out of disk range: " + file.getId());
+            }
+            if (reservedFirstBlocks[firstBlockIndex]) {
+                throw new IllegalArgumentException("duplicate file firstBlockIndex detected: " + firstBlockIndex);
+            }
+            reservedFirstBlocks[firstBlockIndex] = true;
+        }
+        return reservedFirstBlocks;
+    }
+
+    private void synchronizeFileAllocation(FileNode file, boolean[] claimedBlocks, boolean[] reservedFirstBlocks) {
+        int firstBlockIndex = file.getFirstBlockIndex();
+        DiskBlock firstBlock = disk.getBlock(firstBlockIndex);
+        if (firstBlock.isFree()) {
+            hydrateFileAllocation(file, claimedBlocks, reservedFirstBlocks);
+            return;
+        }
+        validateExistingFileAllocation(file, claimedBlocks);
+    }
+
+    private void hydrateFileAllocation(FileNode file, boolean[] claimedBlocks, boolean[] reservedFirstBlocks) {
+        int[] chain = new int[file.getSizeInBlocks()];
+        chain[0] = file.getFirstBlockIndex();
+        markClaimed(chain[0], file, claimedBlocks);
+
+        int searchStart = (chain[0] + 1) % disk.getTotalBlocks();
+        for (int i = 1; i < chain.length; i++) {
+            int blockIndex = findNextFreeUnclaimedBlock(searchStart, claimedBlocks, reservedFirstBlocks);
+            if (blockIndex == SimulatedDisk.NO_FREE_BLOCK) {
+                throw new IllegalArgumentException("unable to hydrate disk allocation for file: " + file.getId());
+            }
+            chain[i] = blockIndex;
+            markClaimed(blockIndex, file, claimedBlocks);
+            searchStart = (blockIndex + 1) % disk.getTotalBlocks();
+        }
+
+        for (int i = 0; i < chain.length; i++) {
+            int nextBlockIndex = (i == chain.length - 1) ? DiskBlock.NO_NEXT_BLOCK : chain[i + 1];
+            disk.allocateBlock(chain[i], file.getId(), nextBlockIndex, file.isSystemFile());
+        }
+    }
+
+    private void validateExistingFileAllocation(FileNode file, boolean[] claimedBlocks) {
+        int currentBlockIndex = file.getFirstBlockIndex();
+        for (int i = 0; i < file.getSizeInBlocks(); i++) {
+            if (!disk.isValidIndex(currentBlockIndex)) {
+                throw new IllegalArgumentException("disk chain points outside disk for file: " + file.getId());
+            }
+
+            DiskBlock block = disk.getBlock(currentBlockIndex);
+            if (block.isFree()) {
+                throw new IllegalArgumentException("disk chain is incomplete for file: " + file.getId());
+            }
+            if (!file.getId().equals(block.getOwnerFileId())) {
+                throw new IllegalArgumentException("disk block owner mismatch for file: " + file.getId());
+            }
+            if (block.isSystemReserved() != file.isSystemFile()) {
+                throw new IllegalArgumentException("disk block system flag mismatch for file: " + file.getId());
+            }
+
+            markClaimed(currentBlockIndex, file, claimedBlocks);
+
+            if (i == file.getSizeInBlocks() - 1) {
+                if (block.getNextBlockIndex() != DiskBlock.NO_NEXT_BLOCK) {
+                    throw new IllegalArgumentException("disk chain length mismatch for file: " + file.getId());
+                }
+                return;
+            }
+
+            currentBlockIndex = block.getNextBlockIndex();
+        }
+    }
+
+    private int findNextFreeUnclaimedBlock(int startIndex, boolean[] claimedBlocks, boolean[] reservedFirstBlocks) {
+        for (int offset = 0; offset < disk.getTotalBlocks(); offset++) {
+            int candidate = (startIndex + offset) % disk.getTotalBlocks();
+            if (!claimedBlocks[candidate]
+                    && !reservedFirstBlocks[candidate]
+                    && disk.getBlock(candidate).isFree()) {
+                return candidate;
+            }
+        }
+        return SimulatedDisk.NO_FREE_BLOCK;
+    }
+
+    private void markClaimed(int blockIndex, FileNode file, boolean[] claimedBlocks) {
+        if (claimedBlocks[blockIndex]) {
+            throw new IllegalArgumentException("duplicate block claim detected for file: " + file.getId());
+        }
+        claimedBlocks[blockIndex] = true;
+    }
+
+    private void ensureNoOrphanedOccupiedBlocks(boolean[] claimedBlocks) {
+        for (int blockIndex = 0; blockIndex < disk.getTotalBlocks(); blockIndex++) {
+            if (!claimedBlocks[blockIndex] && !disk.getBlock(blockIndex).isFree()) {
+                throw new IllegalArgumentException(
+                        "disk contains occupied block without filesystem owner: " + blockIndex);
+            }
+        }
+    }
+
+    private SimulatedDisk copyDisk(SimulatedDisk sourceDisk) {
+        DiskHead sourceHead = sourceDisk.getHead();
+        SimulatedDisk copy = new SimulatedDisk(
+                sourceDisk.getTotalBlocks(),
+                sourceHead.getCurrentBlock(),
+                sourceHead.getDirection());
+        for (int blockIndex = 0; blockIndex < sourceDisk.getTotalBlocks(); blockIndex++) {
+            DiskBlock sourceBlock = sourceDisk.getBlock(blockIndex);
+            if (!sourceBlock.isFree()) {
+                copy.allocateBlock(
+                        blockIndex,
+                        sourceBlock.getOwnerFileId(),
+                        sourceBlock.getNextBlockIndex(),
+                        sourceBlock.isSystemReserved());
+            }
+        }
+        return copy;
+    }
+
+    private boolean materializePendingSubmissions() {
+        boolean changed = false;
+
+        while (!pendingSubmissions.isEmpty()) {
+            PendingSubmission next = pendingSubmissions.peek();
+            if (next.intent != null && processStore.hasActiveProcesses()) {
+                break;
+            }
+
+            pendingSubmissions.dequeue();
+            if (next.intent != null) {
+                materializeIntentSubmission(next);
+                changed = true;
+                continue;
+            }
+
+            try {
+                handleSubmitOperation(next.command);
+            } catch (RuntimeException exception) {
+                processStore.addRejectedTerminatedProcess(next.command, exception.getMessage());
+            }
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private void materializeIntentSubmission(PendingSubmission pendingIntent) {
+        try {
+            if (pendingIntent.intent instanceof SwitchSessionIntent switchSessionIntent) {
+                applicationState.getSessionContext().switchTo(
+                        applicationState.getUserStore().requireById(switchSessionIntent.getTargetUserId()));
+                return;
+            }
+
+            PreparedOperationCommand command = applicationIntentPlanner.plan(
+                    pendingIntent.intent,
+                    pendingIntent.requestId,
+                    pendingIntent.processId);
+            handleSubmitOperation(command);
+        } catch (RuntimeException exception) {
+            processStore.addRejectedTerminatedProcess(
+                    pendingIntent.processId,
+                    pendingIntent.requestId,
+                    describeIntentTargetPath(pendingIntent.intent),
+                    0,
+                    exception.getMessage());
+        }
     }
 
     private void executeCommandSafely(CoordinatorCommand command) {
@@ -480,6 +749,32 @@ public final class SimulationCoordinator {
                 processStore.addRejectedTerminatedProcess(submitCommand.command, exception.getMessage());
             }
         }
+    }
+
+    private String describeIntentTargetPath(ApplicationOperationIntent intent) {
+        if (intent instanceof CreateFileIntent createFileIntent) {
+            return buildIntentChildPath(createFileIntent.getParentDirectoryPath(), createFileIntent.getFileName());
+        }
+        if (intent instanceof CreateDirectoryIntent createDirectoryIntent) {
+            return buildIntentChildPath(createDirectoryIntent.getParentDirectoryPath(), createDirectoryIntent.getDirectoryName());
+        }
+        if (intent instanceof ReadIntent readIntent) {
+            return readIntent.getTargetPath();
+        }
+        if (intent instanceof RenameIntent renameIntent) {
+            return renameIntent.getTargetPath();
+        }
+        if (intent instanceof DeleteIntent deleteIntent) {
+            return deleteIntent.getTargetPath();
+        }
+        return "/";
+    }
+
+    private String buildIntentChildPath(String parentPath, String childName) {
+        if ("/".equals(parentPath)) {
+            return "/" + childName;
+        }
+        return parentPath + "/" + childName;
     }
 
     private void validateTargetBlockInRange(PreparedOperationCommand command) {
@@ -496,6 +791,56 @@ public final class SimulationCoordinator {
 
     private boolean requiresFileLock(ProcessControlBlock process) {
         return process.getRequiredLockType() != null && process.getTargetNodeId() != null;
+    }
+
+    private String nextRequestId() {
+        String candidate;
+        do {
+            candidate = "INTENT-REQ-" + nextRequestNumber++;
+        } while (processStore.containsRequestId(candidate) || pendingContainsRequestId(candidate));
+        return candidate;
+    }
+
+    private String nextProcessId() {
+        String candidate;
+        do {
+            candidate = "INTENT-PROC-" + nextProcessNumber++;
+        } while (processStore.containsProcessId(candidate) || pendingContainsProcessId(candidate));
+        return candidate;
+    }
+
+    private boolean pendingContainsRequestId(String requestId) {
+        final boolean[] found = new boolean[] {false};
+        pendingSubmissions.forEach(submission -> {
+            if (found[0]) {
+                return;
+            }
+            if (submission.command != null && requestId.equals(submission.command.getRequestId())) {
+                found[0] = true;
+                return;
+            }
+            if (requestId.equals(submission.requestId)) {
+                found[0] = true;
+            }
+        });
+        return found[0];
+    }
+
+    private boolean pendingContainsProcessId(String processId) {
+        final boolean[] found = new boolean[] {false};
+        pendingSubmissions.forEach(submission -> {
+            if (found[0]) {
+                return;
+            }
+            if (submission.command != null && processId.equals(submission.command.getProcessId())) {
+                found[0] = true;
+                return;
+            }
+            if (processId.equals(submission.processId)) {
+                found[0] = true;
+            }
+        });
+        return found[0];
     }
 
     private void requireStartedAndAcceptingCommands() {
@@ -553,7 +898,24 @@ public final class SimulationCoordinator {
 
         @Override
         public void execute() {
-            handleSubmitOperation(command);
+            pendingSubmissions.enqueue(PendingSubmission.forCommand(command));
+        }
+    }
+
+    private final class SubmitApplicationIntentCoordinatorCommand implements CoordinatorCommand {
+
+        private final ApplicationOperationIntent intent;
+
+        private SubmitApplicationIntentCoordinatorCommand(ApplicationOperationIntent intent) {
+            this.intent = intent;
+        }
+
+        @Override
+        public void execute() {
+            pendingSubmissions.enqueue(PendingSubmission.forIntent(
+                    intent,
+                    nextRequestId(),
+                    nextProcessId()));
         }
     }
 
@@ -582,6 +944,36 @@ public final class SimulationCoordinator {
         @Override
         public void execute() {
             disk.setHeadDirection(direction);
+        }
+    }
+
+    private static final class PendingSubmission {
+
+        private final PreparedOperationCommand command;
+        private final ApplicationOperationIntent intent;
+        private final String requestId;
+        private final String processId;
+
+        private PendingSubmission(
+                PreparedOperationCommand command,
+                ApplicationOperationIntent intent,
+                String requestId,
+                String processId) {
+            this.command = command;
+            this.intent = intent;
+            this.requestId = requestId;
+            this.processId = processId;
+        }
+
+        private static PendingSubmission forCommand(PreparedOperationCommand command) {
+            return new PendingSubmission(command, null, null, null);
+        }
+
+        private static PendingSubmission forIntent(
+                ApplicationOperationIntent intent,
+                String requestId,
+                String processId) {
+            return new PendingSubmission(null, intent, requestId, processId);
         }
     }
 }

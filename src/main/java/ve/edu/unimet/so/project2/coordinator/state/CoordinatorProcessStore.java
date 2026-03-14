@@ -51,6 +51,20 @@ public final class CoordinatorProcessStore {
         return false;
     }
 
+    public boolean containsRequestId(String requestId) {
+        for (int i = 0; i < processContexts.size(); i++) {
+            if (processContexts.get(i).getProcess().getRequest().getRequestId().equals(requestId)) {
+                return true;
+            }
+        }
+        for (int i = 0; i < terminatedProcesses.size(); i++) {
+            if (terminatedProcesses.get(i).getRequestId().equals(requestId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public ProcessControlBlock admitNextNewProcess() {
         return newProcesses.dequeue();
     }
@@ -94,20 +108,41 @@ public final class CoordinatorProcessStore {
     }
 
     public void addRejectedTerminatedProcess(PreparedOperationCommand command, String errorMessage) {
-        terminatedProcesses.add(new SimulationSnapshot.ProcessSnapshot(
+        addRejectedTerminatedProcess(
                 command.getProcessId(),
                 command.getRequestId(),
+                command.getTargetPath(),
+                command.getTargetBlock(),
+                errorMessage);
+    }
+
+    public void addRejectedTerminatedProcess(
+            String processId,
+            String requestId,
+            String targetPath,
+            int targetBlock,
+            String errorMessage) {
+        terminatedProcesses.add(new SimulationSnapshot.ProcessSnapshot(
+                processId,
+                requestId,
                 ProcessState.TERMINATED,
                 WaitReason.NONE,
                 ResultStatus.FAILED,
-                command.getTargetPath(),
-                command.getTargetBlock(),
+                targetPath,
+                targetBlock,
                 null,
                 normalizeErrorMessage(errorMessage)));
     }
 
     public ProcessControlBlock getRunningProcess() {
         return runningProcess;
+    }
+
+    public boolean hasActiveProcesses() {
+        return runningProcess != null
+                || !newProcesses.isEmpty()
+                || !readyProcesses.isEmpty()
+                || !blockedProcesses.isEmpty();
     }
 
     public void setRunningProcess(ProcessControlBlock runningProcess) {

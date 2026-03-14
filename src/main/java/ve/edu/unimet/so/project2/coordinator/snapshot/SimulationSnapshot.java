@@ -1,11 +1,13 @@
 package ve.edu.unimet.so.project2.coordinator.snapshot;
 
 import ve.edu.unimet.so.project2.disk.DiskHeadDirection;
+import ve.edu.unimet.so.project2.filesystem.FsNodeType;
 import ve.edu.unimet.so.project2.journal.JournalStatus;
 import ve.edu.unimet.so.project2.process.IoOperationType;
 import ve.edu.unimet.so.project2.process.ProcessState;
 import ve.edu.unimet.so.project2.process.ResultStatus;
 import ve.edu.unimet.so.project2.process.WaitReason;
+import ve.edu.unimet.so.project2.session.Role;
 import ve.edu.unimet.so.project2.scheduler.DiskSchedulingPolicy;
 
 public final class SimulationSnapshot {
@@ -23,6 +25,9 @@ public final class SimulationSnapshot {
     private final LockSummary[] locks;
     private final JournalEntrySummary[] journalEntries;
     private final DispatchRecord[] dispatchHistory;
+    private final SessionSummary sessionSummary;
+    private final FileSystemNodeSummary[] fileSystemNodes;
+    private final DiskBlockSummary[] diskBlocks;
 
     public SimulationSnapshot(
             DiskSchedulingPolicy policy,
@@ -37,7 +42,10 @@ public final class SimulationSnapshot {
             ProcessSnapshot[] terminatedProcesses,
             LockSummary[] locks,
             JournalEntrySummary[] journalEntries,
-            DispatchRecord[] dispatchHistory) {
+            DispatchRecord[] dispatchHistory,
+            SessionSummary sessionSummary,
+            FileSystemNodeSummary[] fileSystemNodes,
+            DiskBlockSummary[] diskBlocks) {
         if (policy == null) {
             throw new IllegalArgumentException("policy cannot be null");
         }
@@ -66,6 +74,12 @@ public final class SimulationSnapshot {
         this.locks = copyLockSummaries(locks);
         this.journalEntries = copyJournalEntries(journalEntries);
         this.dispatchHistory = copyDispatchRecords(dispatchHistory);
+        if (sessionSummary == null) {
+            throw new IllegalArgumentException("sessionSummary cannot be null");
+        }
+        this.sessionSummary = sessionSummary;
+        this.fileSystemNodes = copyFileSystemNodes(fileSystemNodes);
+        this.diskBlocks = copyDiskBlocks(diskBlocks);
     }
 
     public DiskSchedulingPolicy getPolicy() {
@@ -120,6 +134,18 @@ public final class SimulationSnapshot {
         return copyDispatchRecords(dispatchHistory);
     }
 
+    public SessionSummary getSessionSummary() {
+        return sessionSummary;
+    }
+
+    public FileSystemNodeSummary[] getFileSystemNodesSnapshot() {
+        return copyFileSystemNodes(fileSystemNodes);
+    }
+
+    public DiskBlockSummary[] getDiskBlocksSnapshot() {
+        return copyDiskBlocks(diskBlocks);
+    }
+
     private static ProcessSnapshot[] copyProcessSnapshots(ProcessSnapshot[] source) {
         if (source == null) {
             return new ProcessSnapshot[0];
@@ -152,6 +178,24 @@ public final class SimulationSnapshot {
             return new DispatchRecord[0];
         }
         DispatchRecord[] copy = new DispatchRecord[source.length];
+        System.arraycopy(source, 0, copy, 0, source.length);
+        return copy;
+    }
+
+    private static FileSystemNodeSummary[] copyFileSystemNodes(FileSystemNodeSummary[] source) {
+        if (source == null) {
+            return new FileSystemNodeSummary[0];
+        }
+        FileSystemNodeSummary[] copy = new FileSystemNodeSummary[source.length];
+        System.arraycopy(source, 0, copy, 0, source.length);
+        return copy;
+    }
+
+    private static DiskBlockSummary[] copyDiskBlocks(DiskBlockSummary[] source) {
+        if (source == null) {
+            return new DiskBlockSummary[0];
+        }
+        DiskBlockSummary[] copy = new DiskBlockSummary[source.length];
         System.arraycopy(source, 0, copy, 0, source.length);
         return copy;
     }
@@ -370,6 +414,182 @@ public final class SimulationSnapshot {
 
         public DiskHeadDirection getDirection() {
             return direction;
+        }
+    }
+
+    public static final class SessionSummary {
+
+        private final String currentUserId;
+        private final String currentUsername;
+        private final Role currentRole;
+
+        public SessionSummary(String currentUserId, String currentUsername, Role currentRole) {
+            this.currentUserId = requireNonBlank(currentUserId, "currentUserId");
+            this.currentUsername = requireNonBlank(currentUsername, "currentUsername");
+            if (currentRole == null) {
+                throw new IllegalArgumentException("currentRole cannot be null");
+            }
+            this.currentRole = currentRole;
+        }
+
+        public String getCurrentUserId() {
+            return currentUserId;
+        }
+
+        public String getCurrentUsername() {
+            return currentUsername;
+        }
+
+        public Role getCurrentRole() {
+            return currentRole;
+        }
+    }
+
+    public static final class FileSystemNodeSummary {
+
+        private final String nodeId;
+        private final String parentNodeId;
+        private final String path;
+        private final String name;
+        private final FsNodeType type;
+        private final String ownerUserId;
+        private final boolean publicReadable;
+        private final int sizeInBlocks;
+        private final int firstBlockIndex;
+        private final String colorId;
+        private final boolean systemFile;
+        private final boolean root;
+
+        public FileSystemNodeSummary(
+                String nodeId,
+                String parentNodeId,
+                String path,
+                String name,
+                FsNodeType type,
+                String ownerUserId,
+                boolean publicReadable,
+                int sizeInBlocks,
+                int firstBlockIndex,
+                String colorId,
+                boolean systemFile,
+                boolean root) {
+            this.nodeId = requireNonBlank(nodeId, "nodeId");
+            this.parentNodeId = normalizeOptional(parentNodeId);
+            this.path = requireNonBlank(path, "path");
+            this.name = requireNonBlank(name, "name");
+            if (type == null) {
+                throw new IllegalArgumentException("type cannot be null");
+            }
+            this.type = type;
+            this.ownerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+            if (sizeInBlocks < 0) {
+                throw new IllegalArgumentException("sizeInBlocks cannot be negative");
+            }
+            if (firstBlockIndex < -1) {
+                throw new IllegalArgumentException("firstBlockIndex cannot be less than -1");
+            }
+            this.publicReadable = publicReadable;
+            this.sizeInBlocks = sizeInBlocks;
+            this.firstBlockIndex = firstBlockIndex;
+            this.colorId = normalizeOptional(colorId);
+            this.systemFile = systemFile;
+            this.root = root;
+        }
+
+        public String getNodeId() {
+            return nodeId;
+        }
+
+        public String getParentNodeId() {
+            return parentNodeId;
+        }
+
+        public String getPath() {
+            return path;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public FsNodeType getType() {
+            return type;
+        }
+
+        public String getOwnerUserId() {
+            return ownerUserId;
+        }
+
+        public boolean isPublicReadable() {
+            return publicReadable;
+        }
+
+        public int getSizeInBlocks() {
+            return sizeInBlocks;
+        }
+
+        public int getFirstBlockIndex() {
+            return firstBlockIndex;
+        }
+
+        public String getColorId() {
+            return colorId;
+        }
+
+        public boolean isSystemFile() {
+            return systemFile;
+        }
+
+        public boolean isRoot() {
+            return root;
+        }
+    }
+
+    public static final class DiskBlockSummary {
+
+        private final int index;
+        private final boolean free;
+        private final String ownerFileId;
+        private final int nextBlockIndex;
+        private final boolean systemReserved;
+
+        public DiskBlockSummary(
+                int index,
+                boolean free,
+                String ownerFileId,
+                int nextBlockIndex,
+                boolean systemReserved) {
+            if (index < 0) {
+                throw new IllegalArgumentException("index cannot be negative");
+            }
+            if (nextBlockIndex < -1) {
+                throw new IllegalArgumentException("nextBlockIndex cannot be less than -1");
+            }
+            this.index = index;
+            this.free = free;
+            this.ownerFileId = normalizeOptional(ownerFileId);
+            this.nextBlockIndex = nextBlockIndex;
+            this.systemReserved = systemReserved;
+        }
+
+        public int getIndex() {
+            return index;
+        }
+
+        public boolean isFree() {
+            return free;
+        }
+
+        public String getOwnerFileId() {
+            return ownerFileId;
+        }
+
+        public int getNextBlockIndex() {
+            return nextBlockIndex;
+        }
+
+        public boolean isSystemReserved() {
+            return systemReserved;
         }
     }
 
