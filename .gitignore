@@ -6,6 +6,8 @@
 /build/
 /dist/
 /out/
+/out-review/
+/out-review-current/
 
 
 # OS junk
