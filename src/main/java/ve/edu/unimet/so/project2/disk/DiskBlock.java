@@ -56,6 +56,10 @@ public class DiskBlock {
         return systemReserved;
     }
 
+    void setOccupiedByProcessId(String occupiedByProcessId) {
+        this.occupiedByProcessId = normalizeOptional(occupiedByProcessId);
+    }
+
     void allocate(String ownerFileId, int nextBlockIndex, boolean systemReserved) {
         if (!free) {
             throw new IllegalStateException("block is already allocated");
@@ -80,17 +84,6 @@ public class DiskBlock {
         this.nextBlockIndex = nextBlockIndex;
     }
 
-    void markOccupiedByProcess(String processId) {
-        if (processId == null || processId.isBlank()) {
-            throw new IllegalArgumentException("processId cannot be blank");
-        }
-        this.occupiedByProcessId = processId;
-    }
-
-    void clearProcessOccupancy() {
-        this.occupiedByProcessId = null;
-    }
-
     void release() {
         this.free = true;
         this.ownerFileId = null;
@@ -106,5 +99,13 @@ public class DiskBlock {
         if (nextBlockIndex == index) {
             throw new IllegalArgumentException("block cannot point to itself");
         }
+    }
+
+    private static String normalizeOptional(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim();
+        return normalized.isEmpty() ? null : normalized;
     }
 }

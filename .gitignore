@@ -1,5 +1,9 @@
 # Maven
 /target/
+/mvnw
+/mvnw.cmd
+/mvnw.bat
+/.mvn/
 
 # NetBeans (just in case)
 /nbproject/private/
@@ -8,6 +12,12 @@
 /out/
 /out-review/
 /out-review-current/
+/tools/
+
+# Eclipse / local IDE files
+/.classpath
+/.project
+/.settings/
 
 
 # OS junk
