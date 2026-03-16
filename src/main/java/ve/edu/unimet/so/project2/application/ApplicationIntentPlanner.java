@@ -50,20 +50,28 @@ public final class ApplicationIntentPlanner {
             ApplicationOperationIntent intent,
             String requestId,
             String processId) {
+        return plan(intent, requestId, processId, null);
+    }
+
+    public PreparedOperationCommand plan(
+            ApplicationOperationIntent intent,
+            String requestId,
+            String processId,
+            String actorUserId) {
         if (intent instanceof CreateFileIntent createFileIntent) {
-            return planCreateFile(createFileIntent, requestId, processId);
+            return planCreateFile(createFileIntent, requestId, processId, actorUserId);
         }
         if (intent instanceof CreateDirectoryIntent createDirectoryIntent) {
-            return planCreateDirectory(createDirectoryIntent, requestId, processId);
+            return planCreateDirectory(createDirectoryIntent, requestId, processId, actorUserId);
         }
         if (intent instanceof ReadIntent readIntent) {
-            return planRead(readIntent, requestId, processId);
+            return planRead(readIntent, requestId, processId, actorUserId);
         }
         if (intent instanceof RenameIntent renameIntent) {
-            return planRename(renameIntent, requestId, processId);
+            return planRename(renameIntent, requestId, processId, actorUserId);
         }
         if (intent instanceof DeleteIntent deleteIntent) {
-            return planDelete(deleteIntent, requestId, processId);
+            return planDelete(deleteIntent, requestId, processId, actorUserId);
         }
         throw new IllegalArgumentException("unsupported application intent: " + intent.getClass().getSimpleName());
     }
@@ -71,10 +79,11 @@ public final class ApplicationIntentPlanner {
     private PreparedOperationCommand planCreateFile(
             CreateFileIntent intent,
             String requestId,
-            String processId) {
+            String processId,
+            String actorUserId) {
         FileSystemCatalog catalog = applicationState.getFileSystemCatalog();
         DirectoryNode parentDirectory = catalog.requireDirectoryByPath(intent.getParentDirectoryPath());
-        User actor = applicationState.getSessionContext().getCurrentUser();
+        User actor = resolveActor(actorUserId);
         permissionService.ensureCanCreate(actor, parentDirectory, intent.isSystemFile());
         validateNodeName(intent.getFileName(), "fileName");
 
@@ -165,10 +174,11 @@ public final class ApplicationIntentPlanner {
     private PreparedOperationCommand planCreateDirectory(
             CreateDirectoryIntent intent,
             String requestId,
-            String processId) {
+            String processId,
+            String actorUserId) {
         FileSystemCatalog catalog = applicationState.getFileSystemCatalog();
         DirectoryNode parentDirectory = catalog.requireDirectoryByPath(intent.getParentDirectoryPath());
-        User actor = applicationState.getSessionContext().getCurrentUser();
+        User actor = resolveActor(actorUserId);
         permissionService.ensureCanCreate(actor, parentDirectory, false);
         validateNodeName(intent.getDirectoryName(), "directoryName");
 
@@ -228,9 +238,10 @@ public final class ApplicationIntentPlanner {
     private PreparedOperationCommand planRead(
             ReadIntent intent,
             String requestId,
-            String processId) {
+            String processId,
+            String actorUserId) {
         FileNode file = applicationState.getFileSystemCatalog().requireFileByPath(intent.getTargetPath());
-        User actor = applicationState.getSessionContext().getCurrentUser();
+        User actor = resolveActor(actorUserId);
         permissionService.ensureCanRead(actor, file);
 
         return new PreparedOperationCommand(
@@ -251,16 +262,17 @@ public final class ApplicationIntentPlanner {
     private PreparedOperationCommand planRename(
             RenameIntent intent,
             String requestId,
-            String processId) {
+            String processId,
+            String actorUserId) {
         FileSystemCatalog catalog = applicationState.getFileSystemCatalog();
         FsNode targetNode = catalog.requireByPath(intent.getTargetPath());
-        User actor = applicationState.getSessionContext().getCurrentUser();
+        User actor = resolveActor(actorUserId);
         permissionService.ensureCanModify(actor, targetNode);
         if (targetNode.isRoot()) {
             throw new IllegalArgumentException("root cannot be renamed");
         }
 
-        DirectoryNode parent = targetNode.getParent();
+        DirectoryNode parent = requireParentDirectory(targetNode);
         PreparedJournalData journalData = new PreparedJournalData(
                 new UpdateRenameUndoData(
                         targetNode.getId(),
@@ -296,10 +308,11 @@ public final class ApplicationIntentPlanner {
     private PreparedOperationCommand planDelete(
             DeleteIntent intent,
             String requestId,
-            String processId) {
+            String processId,
+            String actorUserId) {
         FileSystemCatalog catalog = applicationState.getFileSystemCatalog();
         FsNode targetNode = catalog.requireByPath(intent.getTargetPath());
-        User actor = applicationState.getSessionContext().getCurrentUser();
+        User actor = resolveActor(actorUserId);
         permissionService.ensureCanModify(actor, targetNode);
         if (targetNode.isRoot()) {
             throw new IllegalArgumentException("root cannot be deleted");
@@ -324,13 +337,14 @@ public final class ApplicationIntentPlanner {
 
     private PreparedJournalData buildDeleteJournalData(String actorUserId, FsNode targetNode) {
         if (targetNode instanceof FileNode file) {
+            DirectoryNode parentDirectory = requireParentDirectory(file);
             JournalNodeSnapshot nodeSnapshot = buildNodeSnapshot(file);
             JournalBlockSnapshot[] blockSnapshots = buildFileBlockSnapshots(file);
             return new PreparedJournalData(
                     new DeleteFileUndoData(
                             nodeSnapshot,
-                            file.getParent().getId(),
-                            file.getParent().getPath(),
+                            parentDirectory.getId(),
+                            parentDirectory.getPath(),
                             blockSnapshots),
                     file.getId(),
                     actorUserId,
@@ -340,11 +354,12 @@ public final class ApplicationIntentPlanner {
         FsNode[] subtreeNodes = applicationState.getFileSystemCatalog().getSubtreeSnapshot(targetNode);
         JournalNodeSnapshot[] nodeSnapshots = buildNodeSnapshots(subtreeNodes);
         JournalBlockSnapshot[] associatedBlocks = buildAssociatedBlockSnapshots(subtreeNodes);
+        DirectoryNode parentDirectory = requireParentDirectory(targetNode);
         return new PreparedJournalData(
                 new DeleteDirectoryUndoData(
                         targetNode.getId(),
-                        targetNode.getParent().getId(),
-                        targetNode.getParent().getPath(),
+                        parentDirectory.getId(),
+                        parentDirectory.getPath(),
                         nodeSnapshots,
                         associatedBlocks),
                 targetNode.getId(),
@@ -438,12 +453,13 @@ public final class ApplicationIntentPlanner {
 
     private JournalNodeSnapshot buildNodeSnapshot(FsNode node) {
         if (node instanceof FileNode file) {
+            DirectoryNode parentDirectory = requireParentDirectory(file);
             return new JournalNodeSnapshot(
                     file.getId(),
                     file.getType(),
                     file.getName(),
                     file.getOwnerUserId(),
-                    file.getParent().getId(),
+                    parentDirectory.getId(),
                     file.getPath(),
                     file.getPermissions().isPublicReadable(),
                     file.getSizeInBlocks(),
@@ -452,7 +468,7 @@ public final class ApplicationIntentPlanner {
                     file.isSystemFile());
         }
 
-        DirectoryNode directory = (DirectoryNode) node;
+        DirectoryNode directory = requireDirectoryNode(node);
         return new JournalNodeSnapshot(
                 directory.getId(),
                 directory.getType(),
@@ -465,6 +481,21 @@ public final class ApplicationIntentPlanner {
                 JournalNodeSnapshot.NO_BLOCK,
                 null,
                 false);
+    }
+
+    private DirectoryNode requireParentDirectory(FsNode node) {
+        DirectoryNode parent = node.getParent();
+        if (parent == null) {
+            throw new IllegalArgumentException("node must have a parent directory: " + node.getPath());
+        }
+        return parent;
+    }
+
+    private DirectoryNode requireDirectoryNode(FsNode node) {
+        if (!(node instanceof DirectoryNode directory)) {
+            throw new IllegalArgumentException("expected directory node but found: " + node.getType());
+        }
+        return directory;
     }
 
     private JournalNodeSnapshot[] buildNodeSnapshots(FsNode[] nodes) {
@@ -521,5 +552,15 @@ public final class ApplicationIntentPlanner {
         if (".".equals(value) || "..".equals(value)) {
             throw new IllegalArgumentException(fieldName + " cannot be . or ..");
         }
+    }
+
+    private User resolveActor(String actorUserId) {
+        if (actorUserId == null) {
+            return applicationState.getSessionContext().getCurrentUser();
+        }
+        if (actorUserId.isBlank()) {
+            throw new IllegalArgumentException("actorUserId cannot be blank");
+        }
+        return applicationState.getUserStore().requireById(actorUserId);
     }
 }
