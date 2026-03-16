@@ -8,6 +8,7 @@ import ve.edu.unimet.so.project2.process.ProcessControlBlock;
 import ve.edu.unimet.so.project2.process.ProcessState;
 import ve.edu.unimet.so.project2.process.ResultStatus;
 import ve.edu.unimet.so.project2.process.WaitReason;
+import ve.edu.unimet.so.project2.scenario.ScenarioOperationIntent;
 
 public final class CoordinatorProcessStore {
 
@@ -35,6 +36,16 @@ public final class CoordinatorProcessStore {
     public void registerSubmittedProcess(ProcessControlBlock process, PreparedOperationCommand command) {
         processContexts.add(new ProcessExecutionContext(process, command));
         newProcesses.enqueue(process);
+    }
+
+    public void registerReadyProcess(ProcessControlBlock process, PreparedOperationCommand command) {
+        processContexts.add(new ProcessExecutionContext(process, command));
+        readyProcesses.add(process);
+    }
+
+    public void registerReadyScenarioProcess(ProcessControlBlock process, ScenarioOperationIntent intent) {
+        processContexts.add(new ProcessExecutionContext(process, intent, process.getOwnerUserId()));
+        readyProcesses.add(process);
     }
 
     public boolean containsProcessId(String processId) {
@@ -67,6 +78,10 @@ public final class CoordinatorProcessStore {
 
     public ProcessControlBlock admitNextNewProcess() {
         return newProcesses.dequeue();
+    }
+
+    public ProcessControlBlock[] getNewSnapshot() {
+        return toProcessArray(newProcesses.toArray());
     }
 
     public void addReadyProcess(ProcessControlBlock process) {
@@ -104,16 +119,34 @@ public final class CoordinatorProcessStore {
     }
 
     public void addTerminatedProcess(ProcessControlBlock process) {
+        discardContext(process.getProcessId(), process.getRequest().getRequestId());
         terminatedProcesses.add(toProcessSnapshot(process));
     }
 
     public void addRejectedTerminatedProcess(PreparedOperationCommand command, String errorMessage) {
-        addRejectedTerminatedProcess(
+        discardContext(command.getProcessId(), command.getRequestId());
+        terminatedProcesses.add(buildRejectedProcessSnapshot(
                 command.getProcessId(),
                 command.getRequestId(),
+                command.getOperationType(),
+                command.getOwnerUserId(),
+                command.getRequiredLockType(),
                 command.getTargetPath(),
                 command.getTargetBlock(),
-                errorMessage);
+                errorMessage));
+    }
+
+    public void addCancelledTerminatedProcess(PreparedOperationCommand command, String errorMessage) {
+        discardContext(command.getProcessId(), command.getRequestId());
+        terminatedProcesses.add(buildCancelledProcessSnapshot(
+                command.getProcessId(),
+                command.getRequestId(),
+                command.getOperationType(),
+                command.getOwnerUserId(),
+                command.getRequiredLockType(),
+                command.getTargetPath(),
+                command.getTargetBlock(),
+                errorMessage));
     }
 
     public void addRejectedTerminatedProcess(
@@ -122,16 +155,58 @@ public final class CoordinatorProcessStore {
             String targetPath,
             int targetBlock,
             String errorMessage) {
-        terminatedProcesses.add(new SimulationSnapshot.ProcessSnapshot(
+        addRejectedTerminatedProcess(processId, requestId, null, "system", null, targetPath, targetBlock, errorMessage);
+    }
+
+    public void addRejectedTerminatedProcess(
+            String processId,
+            String requestId,
+            ve.edu.unimet.so.project2.process.IoOperationType operationType,
+            String ownerUserId,
+            ve.edu.unimet.so.project2.locking.LockType requiredLockType,
+            String targetPath,
+            int targetBlock,
+            String errorMessage) {
+        discardContext(processId, requestId);
+        terminatedProcesses.add(buildRejectedProcessSnapshot(
                 processId,
                 requestId,
-                ProcessState.TERMINATED,
-                WaitReason.NONE,
-                ResultStatus.FAILED,
+                operationType,
+                ownerUserId,
+                requiredLockType,
                 targetPath,
                 targetBlock,
-                null,
-                normalizeErrorMessage(errorMessage)));
+                errorMessage));
+    }
+
+    public void addCancelledTerminatedProcess(
+            String processId,
+            String requestId,
+            ve.edu.unimet.so.project2.process.IoOperationType operationType,
+            String ownerUserId,
+            ve.edu.unimet.so.project2.locking.LockType requiredLockType,
+            String targetPath,
+            int targetBlock,
+            String errorMessage) {
+        discardContext(processId, requestId);
+        terminatedProcesses.add(buildCancelledProcessSnapshot(
+                processId,
+                requestId,
+                operationType,
+                ownerUserId,
+                requiredLockType,
+                targetPath,
+                targetBlock,
+                errorMessage));
+    }
+
+    public void cancelAllNonRunningProcesses(String errorMessage) {
+        cancelProcessesIn(newProcesses.toArray(), errorMessage);
+        newProcesses.clear();
+        cancelProcessesIn(readyProcesses.toArray(), errorMessage);
+        readyProcesses.clear();
+        cancelProcessesIn(blockedProcesses.toArray(), errorMessage);
+        blockedProcesses.clear();
     }
 
     public ProcessControlBlock getRunningProcess() {
@@ -213,6 +288,25 @@ public final class CoordinatorProcessStore {
         return toProcessArray(blockedProcesses.toArray());
     }
 
+    public ProcessControlBlock[] getAllNonRunningProcessesSnapshot() {
+        ProcessControlBlock[] newSnapshot = getNewSnapshot();
+        ProcessControlBlock[] readySnapshot = getReadySnapshot();
+        ProcessControlBlock[] blockedSnapshot = getBlockedSnapshot();
+        ProcessControlBlock[] all =
+                new ProcessControlBlock[newSnapshot.length + readySnapshot.length + blockedSnapshot.length];
+        int index = 0;
+        for (ProcessControlBlock process : newSnapshot) {
+            all[index++] = process;
+        }
+        for (ProcessControlBlock process : readySnapshot) {
+            all[index++] = process;
+        }
+        for (ProcessControlBlock process : blockedSnapshot) {
+            all[index++] = process;
+        }
+        return all;
+    }
+
     public SimulationSnapshot.ProcessSnapshot[] getTerminatedProcessSnapshots() {
         Object[] source = terminatedProcesses.toArray();
         SimulationSnapshot.ProcessSnapshot[] result = new SimulationSnapshot.ProcessSnapshot[source.length];
@@ -220,6 +314,17 @@ public final class CoordinatorProcessStore {
             result[i] = (SimulationSnapshot.ProcessSnapshot) source[i];
         }
         return result;
+    }
+
+    public void clear() {
+        newProcesses.clear();
+        readyProcesses.clear();
+        blockedProcesses.clear();
+        terminatedProcesses.clear();
+        processContexts.clear();
+        dispatchHistory.clear();
+        trackedLockFileIds.clear();
+        runningProcess = null;
     }
 
     private SimulationSnapshot.ProcessSnapshot[] toSnapshotArray(Object[] source) {
@@ -245,10 +350,101 @@ public final class CoordinatorProcessStore {
                 process.getState(),
                 process.getWaitReason(),
                 process.getResultStatus(),
+                process.getRequest().getOperationType(),
+                process.getOwnerUserId(),
+                toLockTypeSummary(process.getRequiredLockType()),
                 process.getTargetPath(),
                 process.getTargetBlock(),
                 process.getBlockedByProcessId(),
                 process.getErrorMessage());
+    }
+
+    private SimulationSnapshot.ProcessSnapshot buildRejectedProcessSnapshot(
+            String processId,
+            String requestId,
+            ve.edu.unimet.so.project2.process.IoOperationType operationType,
+            String ownerUserId,
+            ve.edu.unimet.so.project2.locking.LockType requiredLockType,
+            String targetPath,
+            int targetBlock,
+            String errorMessage) {
+        return new SimulationSnapshot.ProcessSnapshot(
+                processId,
+                requestId,
+                ProcessState.TERMINATED,
+                WaitReason.NONE,
+                ResultStatus.FAILED,
+                operationType,
+                ownerUserId,
+                toLockTypeSummary(requiredLockType),
+                targetPath,
+                targetBlock,
+                null,
+                normalizeErrorMessage(errorMessage));
+    }
+
+    private SimulationSnapshot.ProcessSnapshot buildCancelledProcessSnapshot(
+            String processId,
+            String requestId,
+            ve.edu.unimet.so.project2.process.IoOperationType operationType,
+            String ownerUserId,
+            ve.edu.unimet.so.project2.locking.LockType requiredLockType,
+            String targetPath,
+            int targetBlock,
+            String errorMessage) {
+        return new SimulationSnapshot.ProcessSnapshot(
+                processId,
+                requestId,
+                ProcessState.TERMINATED,
+                WaitReason.NONE,
+                ResultStatus.CANCELLED,
+                operationType,
+                ownerUserId,
+                toLockTypeSummary(requiredLockType),
+                targetPath,
+                targetBlock,
+                null,
+                normalizeCancelledMessage(errorMessage));
+    }
+
+    private void cancelProcessesIn(Object[] source, String errorMessage) {
+        for (Object object : source) {
+            ProcessControlBlock process = (ProcessControlBlock) object;
+            discardContext(process.getProcessId(), process.getRequest().getRequestId());
+            terminatedProcesses.add(buildCancelledProcessSnapshot(
+                    process.getProcessId(),
+                    process.getRequest().getRequestId(),
+                    process.getRequest().getOperationType(),
+                    process.getOwnerUserId(),
+                    process.getRequiredLockType(),
+                    process.getTargetPath(),
+                    process.getTargetBlock(),
+                    errorMessage));
+        }
+    }
+
+    private SimulationSnapshot.LockTypeSummary toLockTypeSummary(
+            ve.edu.unimet.so.project2.locking.LockType lockType) {
+        if (lockType == null) {
+            return null;
+        }
+        return lockType == ve.edu.unimet.so.project2.locking.LockType.SHARED
+                ? SimulationSnapshot.LockTypeSummary.SHARED
+                : SimulationSnapshot.LockTypeSummary.EXCLUSIVE;
+    }
+
+    private void discardContext(String processId, String requestId) {
+        if (processId == null || requestId == null) {
+            return;
+        }
+        for (int i = 0; i < processContexts.size(); i++) {
+            ProcessControlBlock process = processContexts.get(i).getProcess();
+            if (process.getProcessId().equals(processId)
+                    && process.getRequest().getRequestId().equals(requestId)) {
+                processContexts.removeAt(i);
+                return;
+            }
+        }
     }
 
     private String normalizeErrorMessage(String errorMessage) {
@@ -257,5 +453,13 @@ public final class CoordinatorProcessStore {
         }
         String normalized = errorMessage.trim();
         return normalized.isEmpty() ? "rejected operation" : normalized;
+    }
+
+    private String normalizeCancelledMessage(String errorMessage) {
+        if (errorMessage == null) {
+            return "cancelled operation";
+        }
+        String normalized = errorMessage.trim();
+        return normalized.isEmpty() ? "cancelled operation" : normalized;
     }
 }

@@ -37,8 +37,20 @@ public class LockTable {
         return findState(fileId) != null;
     }
 
+    public String[] getTrackedFileIdsSnapshot() {
+        String[] snapshot = new String[statesByFile.size()];
+        for (int i = 0; i < statesByFile.size(); i++) {
+            snapshot[i] = statesByFile.get(i).getFileId();
+        }
+        return snapshot;
+    }
+
     public int getTrackedFileCount() {
         return statesByFile.size();
+    }
+
+    public boolean isEmpty() {
+        return statesByFile.isEmpty();
     }
 
     public int getActiveLockCount(String fileId) {

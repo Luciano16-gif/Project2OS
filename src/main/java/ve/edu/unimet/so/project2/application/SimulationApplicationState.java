@@ -84,6 +84,20 @@ public final class SimulationApplicationState {
         return "COLOR-" + nextColorNumber++;
     }
 
+    public void realignGeneratedIdsToCatalog() {
+        long maxNodeNumber = 0L;
+        long maxColorNumber = 0L;
+        FsNode[] nodes = fileSystemCatalog.getAllNodesSnapshot();
+        for (FsNode node : nodes) {
+            maxNodeNumber = Math.max(maxNodeNumber, extractNumericSuffix(node.getId(), "NODE-"));
+            if (node instanceof FileNode file && file.getColorId() != null) {
+                maxColorNumber = Math.max(maxColorNumber, extractNumericSuffix(file.getColorId(), "COLOR-"));
+            }
+        }
+        nextNodeNumber = Math.max(nextNodeNumber, maxNodeNumber + 1L);
+        nextColorNumber = Math.max(nextColorNumber, maxColorNumber + 1L);
+    }
+
     public void reserveBlockIndexes(int[] blockIndexes) {
         if (blockIndexes == null || blockIndexes.length == 0) {
             throw new IllegalArgumentException("blockIndexes cannot be null or empty");
@@ -186,7 +200,7 @@ public final class SimulationApplicationState {
             return copyDirectorySubtree(directory);
         }
 
-        FileNode file = (FileNode) original;
+        FileNode file = requireFileNode(original);
         return new ve.edu.unimet.so.project2.filesystem.FileNode(
                 file.getId(),
                 file.getName(),
@@ -198,9 +212,27 @@ public final class SimulationApplicationState {
                 file.isSystemFile());
     }
 
+    private static FileNode requireFileNode(FsNode node) {
+        if (!(node instanceof FileNode file)) {
+            throw new IllegalArgumentException("expected file node but found: " + node.getType());
+        }
+        return file;
+    }
+
     private static AccessPermissions copyPermissions(AccessPermissions permissions) {
         return permissions.isPublicReadable()
                 ? AccessPermissions.publicReadAccess()
                 : AccessPermissions.privateAccess();
+    }
+
+    private long extractNumericSuffix(String value, String prefix) {
+        if (value == null || !value.startsWith(prefix)) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(value.substring(prefix.length()));
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
     }
 }

@@ -113,6 +113,17 @@ public class SimulatedDisk {
         head.moveTo(blockIndex);
     }
 
+    public void setBlockOccupantProcessId(int index, String processId) {
+        validateIndex(index);
+        blocks[index].setOccupiedByProcessId(processId);
+    }
+
+    public void clearAllBlockOccupants() {
+        for (DiskBlock block : blocks) {
+            block.setOccupiedByProcessId(null);
+        }
+    }
+
     public void setHeadDirection(DiskHeadDirection direction) {
         head.setDirection(direction);
     }
