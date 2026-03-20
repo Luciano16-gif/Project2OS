@@ -15,21 +15,26 @@ El enfoque inicial es definir un nucleo de dominio pequeno, estricto y facil de 
 
 ### 1.1 Objetivo
 
-Esta primera version cubre:
+La version actual de este documento cubre el proyecto completo que se desea entregar:
 
 - modelo de dominio,
 - entidades principales,
 - relaciones entre entidades,
-- invariantes del sistema.
-
-Quedan para iteraciones siguientes:
-
-- concurrencia e hilos,
+- invariantes del sistema,
 - scheduler de disco,
+- procesos,
 - locks,
 - journaling,
+- GUI,
 - persistencia,
-- GUI y snapshots.
+- concurrencia controlada,
+- carga de escenarios externos.
+
+Nota de alcance:
+
+- este documento comenzo como una especificacion parcial,
+- las secciones posteriores ya consolidan decisiones para el proyecto completo,
+- si una seccion posterior agrega detalle o cierra una decision, prevalece sobre este resumen inicial.
 
 ### 1.2 Alcance de esta version
 
@@ -40,7 +45,18 @@ Quedan para iteraciones siguientes:
 - No se modelara mas detalle del necesario si no aporta claridad o seguridad.
 - Las restricciones del enunciado tienen prioridad sobre soluciones mas comodas.
 
+Regla de lectura del documento:
+
+- el alcance real queda determinado por todas las secciones cerradas de este documento,
+- las referencias a "version inicial" deben entenderse como contexto historico y no como exclusion automatica de secciones posteriores ya aprobadas.
+
 ### 1.3 Principios de modelado
+
+- Separar estado real del dominio y vistas derivadas de la GUI.
+- Preferir invariantes explicitos a validaciones dispersas y tardias.
+- Centralizar decisiones criticas de concurrencia y transicion de estado.
+- Reutilizar solo estructuras genericas que no arrastren acoplamiento del proyecto 1.
+- Mantener el alcance alineado con el enunciado y evitar complejidad no defendible.
 
 ## 2. Modelo de dominio
 
@@ -172,7 +188,7 @@ Enumeracion propuesta:
 
 Nota:
 
-- `UPDATE` queda pendiente de definicion precisa en una iteracion posterior del documento.
+- `UPDATE` forma parte de la enumeracion base de operaciones y su semantica concreta se fija en la seccion 3.4.
 
 #### 2.4.2 ProcessState
 
@@ -416,6 +432,12 @@ Comportamiento base:
 - valida unicidad del nuevo nombre dentro del padre,
 - actualiza el nombre del nodo objetivo,
 - refleja el cambio en la GUI y vistas derivadas.
+
+Nota para escenarios externos:
+
+- como el formato JSON del enunciado solo aporta `pos` y `op`, un `UPDATE` cargado desde escenario externo no trae por si solo el nuevo nombre,
+- por tanto, la implementacion podra aplicar una estrategia determinista y defendible de renombrado automatico para esos casos de prueba,
+- esta flexibilizacion aplica solo al formato externo de demostracion y no cambia la semantica normal de `UPDATE` en la GUI.
 
 Decision:
 
@@ -805,6 +827,13 @@ Objetivo:
 - mantener equidad,
 - evitar inanicion de escritores,
 - conservar una semantica explicable y defendible.
+
+Regla de visibilidad para la simulacion:
+
+- aun cuando el sistema ejecute una sola operacion de disco activa por vez, la GUI debe poder reflejar contencion real,
+- la contencion por lock se hace visible durante la evaluacion de despacho del coordinador, cuando detecta incompatibilidad antes de entregar trabajo al hilo de disco,
+- por ello, un proceso puede pasar de `READY` a `BLOCKED` durante el intento de despacho del coordinador, sin que el hilo de disco haya comenzado la ejecucion,
+- esta decision existe para hacer observable la cola de espera por lock sin romper el modelo de coordinador unico.
 
 ### 6.6 Adquisicion del lock
 
@@ -1296,6 +1325,12 @@ Interpretacion:
 
 - el usuario decide cuando persistir el snapshot completo del sistema.
 
+Diferenciacion explicita:
+
+- `Guardar` y `Cargar sistema` pertenecen al flujo normal de persistencia,
+- estas acciones trabajan con snapshots completos del estado del simulador,
+- no deben confundirse con la carga de escenarios externos para pruebas.
+
 ### 9.9 Herramientas de demostracion
 
 La interfaz podra incluir un menu o boton `Mas...` o equivalente para funciones especiales de showcase.
@@ -1312,6 +1347,12 @@ Decision:
 
 - estas herramientas no forman parte del flujo normal de persistencia,
 - existen para facilitar demostracion y defensa del proyecto.
+
+Separacion operativa:
+
+- `Cargar sistema` restaura un estado previamente guardado del simulador,
+- `Cargar escenario` prepara un caso de prueba externo compatible con el PDF,
+- ambos flujos deben permanecer separados en la GUI y en la implementacion.
 
 ### 9.10 Carga y reconstruccion
 
@@ -1424,6 +1465,12 @@ Decision:
 
 - el orden final del sistema siempre lo impone el coordinador.
 
+Aclaratoria de implementacion:
+
+- en la primera implementacion defendible, el hilo de disco atiende una sola tarea activa por vez,
+- la concurrencia observable del proyecto se concentra en colas, estados, locks y transiciones coordinadas,
+- no se requiere ejecutar multiples operaciones de disco simultaneas para que exista contencion valida sobre recursos.
+
 ### 10.4 Recursos compartidos a proteger
 
 La proteccion concurrente se limitara en esta version a tres regiones principales:
@@ -1520,6 +1567,12 @@ Decision:
 
 - la clave del objeto en `system_files` se interpretara como `startBlock`.
 
+Limitacion explicita del formato:
+
+- este formato externo describe bien operaciones referidas a archivos ya existentes en `system_files`,
+- el formato no aporta datos suficientes para construir una operacion `CREATE` completa sin extensiones adicionales,
+- por ello, la compatibilidad obligatoria del cargador se concentra en `READ`, `UPDATE` y `DELETE` sobre archivos reconstruibles desde el escenario.
+
 ### 11.4 Transformacion en dos pasos
 
 La carga del escenario no se hara directo al dominio.
@@ -1573,6 +1626,11 @@ Decision:
 
 - las requests cargadas desde escenario externo entraran inicialmente en `READY`.
 
+Decision adicional de usabilidad:
+
+- la GUI podra dejar la simulacion en pausa inmediatamente despues de cargar un escenario para permitir escoger politica, direccion o velocidad antes de ejecutar,
+- esta pausa inicial no altera el estado logico de las requests, solo el momento en que empieza el despacho.
+
 ### 11.7 Regla de construccion de archivos del escenario
 
 Cuando un `system_file` externo indique:
@@ -1605,7 +1663,8 @@ Antes de aplicar el escenario, se validara al menos:
 - que `blocks > 0`,
 - que el escenario no exceda la capacidad del disco,
 - que no se formen colisiones imposibles,
-- que la construccion de cadenas sea posible.
+- que la construccion de cadenas sea posible,
+- que no se exija una operacion cuyo significado no pueda reconstruirse con el formato externo soportado.
 
 Decision:
 
@@ -1628,32 +1687,34 @@ Objetivo:
 
 ## 12. Permisos y modos de usuario
 
-Esta seccion fija la politica actual de permisos mientras se espera confirmacion externa.
+Esta seccion fija la politica de permisos vigente para la implementacion actual.
 
-### 11.1 Modo administrador
+### 12.1 Modo administrador
 
 Decision base:
 
 - `ADMIN` puede ejecutar todas las operaciones del sistema sobre cualquier recurso permitido por el simulador.
 
-### 11.2 Modo usuario
+### 12.2 Modo usuario
 
-Asuncion provisional aprobada:
+Decision confirmada:
 
 - `USER` puede ejecutar operaciones completas sobre recursos propios,
-- `USER` puede leer recursos externos solo cuando sean publicos o legibles segun la politica final,
+- `USER` puede leer recursos externos solo cuando sean publicos o legibles segun la politica aplicada,
 - `USER` no puede modificar recursos de otros usuarios,
 - `USER` no puede modificar archivos del sistema.
 
-Interpretacion operativa provisional:
+Interpretacion operativa:
 
 - sobre archivos propios, `USER` puede hacer `CREATE`, `READ`, `UPDATE` y `DELETE`,
 - sobre archivos ajenos, `USER` queda limitado a lectura cuando corresponda,
 - sobre archivos del sistema, `USER` no puede hacer operaciones modificadoras.
 
-Decision:
+Justificacion:
 
-- esta politica queda marcada como provisional hasta recibir respuesta de la preparadora.
+- cuando el enunciado resume que el modo usuario es "solo lectura", esa restriccion debe entenderse respecto a recursos ajenos o del sistema,
+- esa frase no invalida la capacidad del usuario de operar completamente sobre sus propios recursos dentro del simulador,
+- esta interpretacion fue confirmada externamente por la preparadora durante la fase de aclaratorias.
 
 ## 13. Validaciones de entrada y manejo de errores
 
@@ -1842,7 +1903,8 @@ Decision base:
 
 ## 15. Decisiones abiertas
 
-Estas decisiones se resolveran en iteraciones siguientes:
+Estado actual:
 
-- Ya no queda ninguna pero lo dejo porsia sale una nueva cuando estemos en desarrollo,
-- las aclaratorias futuras podran refinar permisos o detalles de implementacion sin romper la arquitectura ya aprobada.
+- no queda ninguna decision abierta necesaria para implementar la version objetivo de entrega del proyecto,
+- futuras aclaratorias podran refinar detalles menores sin romper la arquitectura ya aprobada,
+- si aparece una nueva decision abierta durante desarrollo, debera registrarse aqui de forma explicita con fecha y motivo.
