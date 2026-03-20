@@ -4,7 +4,7 @@
 
 package ve.edu.unimet.so.project2.project2os;
 
-import ve.edu.unimet.so.project2.project2os.gui.MainFrame;
+import ve.edu.unimet.so.project2.project2os.gui.GuiLauncher;
 import javax.swing.SwingUtilities;
 
 /**
@@ -14,9 +14,6 @@ import javax.swing.SwingUtilities;
 public class Project2OS {
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            MainFrame frame = new MainFrame();
-            frame.setVisible(true);
-        });
+        SwingUtilities.invokeLater(() -> GuiLauncher.launch());
     }
 }

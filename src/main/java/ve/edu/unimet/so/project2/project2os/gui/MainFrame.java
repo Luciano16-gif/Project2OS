@@ -2,202 +2,219 @@ package ve.edu.unimet.so.project2.project2os.gui;
 
 import javax.swing.*;
 import java.awt.*;
-import javax.swing.table.DefaultTableModel;
 
 public class MainFrame extends JFrame {
 
+    private JButton btnAdmin, btnUser;
+    private JComboBox<String> comboPolicy;
+    private JButton btnPolicyChange;
+    private JButton btnSaveSystem, btnLoadSystem, btnLoadScenario;
+    private JButton btnPlay, btnPause;
+    private JComboBox<String> comboPlaybackSpeed;
+    private JLabel lblCycle;
+
+    private JButton btnCreateFile, btnCreateDir, btnRead, btnRename, btnDelete, btnStats;
+    private JButton btnSimularFallo, btnRecovery;
+    private JLabel lblSystemState;
+
+    private FileSystemTreePanel fileSystemTreePanel;
+    private DiskVisualizationPanel diskVisualizationPanel;
+    private ProcessQueuePanel processQueuePanel;
+    private JournalPanel journalPanel;
+    private EventLogPanel eventLogPanel;
+
+    private JLabel lblStatusLeft, lblStatusCenter, lblStatusRight;
+
     public MainFrame() {
-        setTitle("Project 2 OS - Simulador");
+        setTitle("Simulador de Sistema de Archivos - SO 2425-2");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(1024, 768);
+        setSize(1200, 800);
         setLocationRelativeTo(null);
+        setBackground(DarkTheme.BG_DARK);
         initComponents();
     }
 
     private void initComponents() {
         setLayout(new BorderLayout());
 
-        // ============================================
-        // 1. BARRA SUPERIOR (NORTH)
-        // ============================================
-        JPanel topToolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 5));
+        // TOP TOOLBAR
+        JPanel topToolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 10));
+        topToolbar.setBackground(DarkTheme.BG_HEADER);
 
-        // Bloque Autenticación
         JPanel authPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
-        authPanel.add(new JLabel("Usuario"));
-        JTextField txtUser = new JTextField("admin", 6);
-        txtUser.setEditable(false);
-        authPanel.add(txtUser);
-        authPanel.add(new JLabel("Modo"));
-        authPanel.add(new JComboBox<>(new String[] { "ADMIN", "USER" }));
-        authPanel.add(new JButton("Aplicar sesion"));
+        authPanel.setOpaque(false);
+        JLabel lblAuth = new JLabel("Controles   ");
+        lblAuth.setForeground(DarkTheme.FG_PRIMARY);
+        authPanel.add(lblAuth);
+        
+        btnAdmin = DarkTheme.styledButton("Administrador");
+        btnUser = DarkTheme.styledButton("Usuario");
+        authPanel.add(btnAdmin);
+        authPanel.add(btnUser);
         topToolbar.add(authPanel);
 
-        // Bloque Política
-        JPanel policyPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
-        policyPanel.add(new JLabel("Politica"));
-        policyPanel.add(new JComboBox<>(new String[] { "SSTF", "FFIFO", "SCAN", "C-SCAN" }));
-        policyPanel.add(new JButton("Cambiar"));
-        topToolbar.add(policyPanel);
+        btnCreateFile = DarkTheme.styledButton("Crear Archivo");
+        btnCreateDir = DarkTheme.styledButton("Crear Directorio");
+        btnRead = DarkTheme.styledButton("Leer");
+        btnRename = DarkTheme.styledButton("Renombrar");
+        btnDelete = DarkTheme.styledButton("Eliminar");
+        btnStats = DarkTheme.styledButton("Estadísticas");
+        btnSaveSystem = DarkTheme.styledButton("Guardar");
+        btnLoadSystem = DarkTheme.styledButton("Cargar");
+        btnLoadScenario = DarkTheme.styledButton("Escenario JSON");
+        topToolbar.add(btnCreateFile);
+        topToolbar.add(btnCreateDir);
+        topToolbar.add(btnRead);
+        topToolbar.add(btnRename);
+        topToolbar.add(btnDelete);
+        topToolbar.add(btnStats);
+        topToolbar.add(btnSaveSystem);
+        topToolbar.add(btnLoadSystem);
+        topToolbar.add(btnLoadScenario);
 
-        // Bloque Ejecución
-        JPanel execPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
-        execPanel.add(new JButton("Run"));
-        execPanel.add(new JButton("Pause"));
-        execPanel.add(new JButton("Step"));
-        execPanel.add(new JLabel("||")); // separador visual
-        JTextField txtPos = new JTextField("62", 3);
-        execPanel.add(txtPos);
-        execPanel.add(new JComboBox<>(new String[] { "UP", "DOWN" }));
-        execPanel.add(new JButton("Aplicar"));
-        topToolbar.add(execPanel);
+        btnPlay = DarkTheme.styledButton("▶");
+        btnPlay.setForeground(DarkTheme.ACCENT_GREEN);
+        btnPause = DarkTheme.styledButton("⏸");
+        btnPause.setForeground(DarkTheme.ACCENT_RED);
+        comboPlaybackSpeed = new JComboBox<>(new String[]{"75 ms", "150 ms", "250 ms", "500 ms", "1000 ms"});
+        comboPlaybackSpeed.setSelectedItem("150 ms");
+        topToolbar.add(btnPlay);
+        topToolbar.add(btnPause);
+        topToolbar.add(new JLabel("Velocidad:"));
+        topToolbar.add(comboPlaybackSpeed);
 
-        // Bloque Sistema
-        JPanel sysPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
-        sysPanel.add(new JButton("Guardar"));
-        sysPanel.add(new JButton("Cargar sistema"));
-        sysPanel.add(new JButton("Cargar escenario"));
-        sysPanel.add(new JButton("Simular fallo"));
-        sysPanel.add(new JButton("Recovery"));
-        topToolbar.add(sysPanel);
-
-        // Bloque Ajustes
-        JPanel adjPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
-        adjPanel.add(new JLabel("Delay ms"));
-        adjPanel.add(new JTextField("500", 4));
-        adjPanel.add(new JButton("Velocidad"));
-        topToolbar.add(adjPanel);
+        lblCycle = new JLabel("Reproduciendo (150 ms)");
+        lblCycle.setForeground(DarkTheme.FG_PRIMARY);
+        topToolbar.add(Box.createHorizontalStrut(50));
+        topToolbar.add(lblCycle);
 
         add(topToolbar, BorderLayout.NORTH);
 
-        // ============================================
-        // 2. ÁREA CENTRAL (JSplitPane Principal)
-        // ============================================
+        // ----------------- CENTER LAYOUT -----------------
+        fileSystemTreePanel = new FileSystemTreePanel();
+        diskVisualizationPanel = new DiskVisualizationPanel(100);
+        journalPanel = new JournalPanel();
+        processQueuePanel = new ProcessQueuePanel();
+        eventLogPanel = new EventLogPanel();
 
-        // --- 2.1 PANEL IZQUIERDO (West) ---
-        // Arbol superior
-        JPanel treePanel = new JPanel(new BorderLayout());
-        treePanel.setBorder(BorderFactory.createTitledBorder("Arbol del sistema"));
-        JTree directoryTree = new JTree();
-        treePanel.add(new JScrollPane(directoryTree), BorderLayout.CENTER);
+        JPanel leftPanel = DarkTheme.styledPanel("Sistema de Archivos");
+        leftPanel.setLayout(new BorderLayout());
+        leftPanel.add(fileSystemTreePanel, BorderLayout.CENTER);
+        
+        JPanel logContainer = DarkTheme.styledPanel("Log de Eventos");
+        logContainer.setLayout(new BorderLayout());
+        logContainer.add(eventLogPanel, BorderLayout.CENTER);
+        JButton btnClearLog = DarkTheme.styledButton("Limpiar");
+        JPanel logBottom = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        logBottom.setOpaque(false);
+        logBottom.add(btnClearLog);
+        logContainer.add(logBottom, BorderLayout.SOUTH);
+        
+        JSplitPane leftSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, leftPanel, logContainer);
+        leftSplit.setResizeWeight(0.65);
+        leftSplit.setDividerSize(4);
 
-        // Detalles inferior
-        JPanel detailsPanel = new JPanel(new BorderLayout());
-        detailsPanel.setBorder(BorderFactory.createTitledBorder("Detalles"));
-        JTextArea txtDetails = new JTextArea(
-                "ID: N-35\nNombre: data_log.csv_upd_6\nRuta: /system/data_log.csv_upd_6\nTipo: FILE\nOwner: admin\nBloques: 28\nPrimer bloque: 131\nSistema: Si\nLectura publica: Si");
-        txtDetails.setEditable(false);
-        txtDetails.setOpaque(false);
-        detailsPanel.add(txtDetails, BorderLayout.CENTER);
+        JPanel diskContainer = DarkTheme.styledPanel("Disk Visualization");
+        diskContainer.setLayout(new BorderLayout());
+        
+        JPanel policyOverlay = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        policyOverlay.setOpaque(false);
+        comboPolicy = new JComboBox<>(new String[]{"FIFO", "SSTF", "SCAN", "C_SCAN"});
+        btnPolicyChange = DarkTheme.styledButton("Aplicar Política");
+        JLabel lblPlan = new JLabel("Planificador:");
+        lblPlan.setForeground(DarkTheme.FG_PRIMARY);
+        policyOverlay.add(lblPlan);
+        policyOverlay.add(comboPolicy);
+        policyOverlay.add(btnPolicyChange);
+        diskContainer.add(policyOverlay, BorderLayout.NORTH);
+        diskContainer.add(diskVisualizationPanel, BorderLayout.CENTER);
 
-        // Botonera debajo de detalles
-        JPanel fileButtonsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        fileButtonsPanel.add(new JButton("Crear archivo"));
-        fileButtonsPanel.add(new JButton("Crear dir"));
-        fileButtonsPanel.add(new JButton("Leer"));
-        fileButtonsPanel.add(new JButton("Renombrar"));
-        fileButtonsPanel.add(new JButton("Eliminar"));
-        detailsPanel.add(fileButtonsPanel, BorderLayout.SOUTH);
+        JPanel rightTop = DarkTheme.styledPanel("Journal");
+        rightTop.setLayout(new BorderLayout());
+        rightTop.add(journalPanel, BorderLayout.CENTER);
+        
+        JPanel rightTopBottom = new JPanel(new GridLayout(2, 1, 0, 5));
+        rightTopBottom.setOpaque(false);
+        rightTopBottom.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        btnSimularFallo = DarkTheme.styledButton("Simular Fallo");
+        lblSystemState = new JLabel("Estado del Sistema: Normal", SwingConstants.CENTER);
+        lblSystemState.setForeground(DarkTheme.FG_PRIMARY);
+        rightTopBottom.add(btnSimularFallo);
+        rightTopBottom.add(lblSystemState);
+        rightTop.add(rightTopBottom, BorderLayout.SOUTH);
 
-        JSplitPane leftSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, treePanel, detailsPanel);
-        leftSplit.setResizeWeight(0.6); // 60% arbol, 40% detalles
-        leftSplit.setMinimumSize(new Dimension(250, 0));
+        JPanel rightBottom = DarkTheme.styledPanel("Cola de Procesos");
+        rightBottom.setLayout(new BorderLayout());
+        rightBottom.add(processQueuePanel, BorderLayout.CENTER);
 
-        // --- 2.2 PANEL DERECHO (East) ---
+        JSplitPane rightSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, rightTop, rightBottom);
+        rightSplit.setResizeWeight(0.5);
+        rightSplit.setDividerSize(4);
 
-        // 2.2.1 Disco Simulado (Top)
-        JPanel diskPanel = new JPanel(new BorderLayout());
-        diskPanel.setBorder(BorderFactory.createTitledBorder("Disco simulado"));
-        JPanel blocksGrid = new JPanel(new GridLayout(6, 20, 2, 2)); // 120 blocks approx
-        for (int i = 0; i < 120; i++) {
-            JButton block = new JButton("<html><center>" + i + "<br>O</center></html>");
-            block.setMargin(new Insets(1, 1, 1, 1));
-            block.setFont(block.getFont().deriveFont(9f));
-            if (i < 35)
-                block.setBackground(new Color(230, 80, 50)); // Rojo
-            else if (i < 70)
-                block.setBackground(new Color(200, 200, 200)); // Gris
-            else
-                block.setBackground(new Color(255, 255, 255)); // Blanco
-            blocksGrid.add(block);
-        }
-        JPanel gridWrapper = new JPanel(new BorderLayout());
-        gridWrapper.add(blocksGrid, BorderLayout.NORTH);
-        diskPanel.add(new JScrollPane(gridWrapper), BorderLayout.CENTER);
+        JSplitPane centerRightSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, diskContainer, rightSplit);
+        centerRightSplit.setResizeWeight(0.7);
+        centerRightSplit.setDividerSize(4);
 
-        // 2.2.2 Tabla de Asignación (Middle Top)
-        JPanel tablePanel = new JPanel(new BorderLayout());
-        tablePanel.setBorder(BorderFactory.createTitledBorder("Tabla de asignacion"));
-        String[] colAlloc = { "Archivo", "Owner", "Bloques", "Primer bloque", "Color", "Ruta" };
-        JTable tableAlloc = new JTable(new DefaultTableModel(new Object[][] {
-                { "boot_sect.bin", "admin", "2", "11", "#50A14F", "/system/boot_sect.bin" }
-        }, colAlloc));
-        tablePanel.add(new JScrollPane(tableAlloc), BorderLayout.CENTER);
-
-        // 2.2.3 Procesos, locks y journal (Middle Bottom)
-        JPanel procPanel = new JPanel(new GridLayout(1, 2, 5, 0)); // 2 tables side by side
-        procPanel.setBorder(BorderFactory.createTitledBorder("Procesos, locks y journal"));
-
-        String[] colProc = { "PID", "Operacion", "Objetivo", "Estado", "Lock", "Bloque", "Usuario", "Resultado",
-                "Espera" };
-        JTable tableProc = new JTable(new DefaultTableModel(new Object[][] {
-                { "P-13", "READ", "/system/bo...", "TERMINAT...", "SHARED", "11", "admin", "SUCCESS", "NONE" }
-        }, colProc));
-        procPanel.add(new JScrollPane(tableProc));
-
-        String[] colFileLock = { "Archivo", "Tipo", "Owners", "Espera" };
-        JTable tableFileLock = new JTable(new DefaultTableModel(new Object[][] {}, colFileLock));
-        procPanel.add(new JScrollPane(tableFileLock));
-
-        // 2.2.4 Log/Tx (Bottom)
-        JPanel logPanel = new JPanel(new BorderLayout());
-        // split log in two parts: tx table and text area
-        String[] colTx = { "TX", "Operacion", "Ruta", "Estado", "Descripcion" };
-        JTable tableTx = new JTable(new DefaultTableModel(new Object[][] {
-                { "TX-3", "DELETE", "/system/image_01.png", "COMMITTED", "DELETE /system/image_01.png" }
-        }, colTx));
-
-        JTextArea txtLog = new JTextArea(
-                "proceso P-17 finalizado: UPDATE completado\nDespachado P-16 con politica SSTF...");
-        txtLog.setEditable(false);
-        txtLog.setBackground(new Color(245, 245, 245));
-
-        JSplitPane bottomLogSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, new JScrollPane(tableTx),
-                new JScrollPane(txtLog));
-        bottomLogSplit.setResizeWeight(0.6);
-        logPanel.add(bottomLogSplit, BorderLayout.CENTER);
-
-        // Anidar splits Derechos
-        JSplitPane rightSplit3 = new JSplitPane(JSplitPane.VERTICAL_SPLIT, procPanel, logPanel);
-        rightSplit3.setResizeWeight(0.7);
-
-        JSplitPane rightSplit2 = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tablePanel, rightSplit3);
-        rightSplit2.setResizeWeight(0.5);
-
-        JSplitPane rightSplit1 = new JSplitPane(JSplitPane.VERTICAL_SPLIT, diskPanel, rightSplit2);
-        rightSplit1.setResizeWeight(0.4);
-
-        // Split final
-        JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftSplit, rightSplit1);
-        mainSplit.setResizeWeight(0.2); // 20% izquierda, 80% derecha
+        JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftSplit, centerRightSplit);
+        mainSplit.setResizeWeight(0.20);
+        mainSplit.setDividerSize(4);
 
         add(mainSplit, BorderLayout.CENTER);
 
-        // ============================================
-        // 3. BARRA DE ESTADO (SOUTH)
-        // ============================================
+        // STATUS BAR
         JPanel statusBar = new JPanel(new BorderLayout());
+        statusBar.setBackground(DarkTheme.BG_HEADER);
         statusBar.setBorder(BorderFactory.createEmptyBorder(3, 10, 3, 10));
 
-        JLabel lblStatusLeft = new JLabel(
-                "Pausa | cabeza 62 | politica SSTF | delay 500 ms | ultimo despacho P-15 -> /system/script.py");
-        JLabel lblStatusCenter = new JLabel("Sesion: admin / ADMIN", SwingConstants.CENTER);
-        JLabel lblStatusRight = new JLabel("Disco: libres 99 de 200    Seek total 127 | ultimo 8");
+        lblStatusLeft = new JLabel("Cargando...");
+        lblStatusCenter = new JLabel("Sesión...", SwingConstants.CENTER);
+        lblStatusRight = new JLabel("Cargando...");
+        lblStatusLeft.setForeground(DarkTheme.FG_PRIMARY);
+        lblStatusCenter.setForeground(DarkTheme.FG_PRIMARY);
+        lblStatusRight.setForeground(DarkTheme.FG_PRIMARY);
 
         statusBar.add(lblStatusLeft, BorderLayout.WEST);
         statusBar.add(lblStatusCenter, BorderLayout.CENTER);
-        statusBar.add(lblStatusRight, BorderLayout.EAST);
+        JPanel rightStatusContainer = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        rightStatusContainer.setOpaque(false);
+        rightStatusContainer.add(lblStatusRight);
+        btnRecovery = DarkTheme.styledButton("Recovery");
+        rightStatusContainer.add(btnRecovery);
+        statusBar.add(rightStatusContainer, BorderLayout.EAST);
 
         add(statusBar, BorderLayout.SOUTH);
+
+        btnClearLog.addActionListener(e -> eventLogPanel.clearLog());
     }
+
+    public JButton getBtnAdmin() { return btnAdmin; }
+    public JButton getBtnUser() { return btnUser; }
+    public JComboBox<String> getComboPolicy() { return comboPolicy; }
+    public JButton getBtnPolicyChange() { return btnPolicyChange; }
+    public JButton getBtnSaveSystem() { return btnSaveSystem; }
+    public JButton getBtnLoadSystem() { return btnLoadSystem; }
+    public JButton getBtnLoadScenario() { return btnLoadScenario; }
+    public JButton getBtnPlay() { return btnPlay; }
+    public JButton getBtnPause() { return btnPause; }
+    public JComboBox<String> getComboPlaybackSpeed() { return comboPlaybackSpeed; }
+    public JLabel getLblCycle() { return lblCycle; }
+    public JButton getBtnCreateFile() { return btnCreateFile; }
+    public JButton getBtnCreateDir() { return btnCreateDir; }
+    public JButton getBtnRead() { return btnRead; }
+    public JButton getBtnRename() { return btnRename; }
+    public JButton getBtnDelete() { return btnDelete; }
+    public JButton getBtnStats() { return btnStats; }
+    public JButton getBtnSimularFallo() { return btnSimularFallo; }
+    public JButton getBtnRecovery() { return btnRecovery; }
+    public JLabel getLblSystemState() { return lblSystemState; }
+
+    public FileSystemTreePanel getFileSystemTreePanel() { return fileSystemTreePanel; }
+    public DiskVisualizationPanel getDiskVisualizationPanel() { return diskVisualizationPanel; }
+    public ProcessQueuePanel getProcessQueuePanel() { return processQueuePanel; }
+    public JournalPanel getJournalPanel() { return journalPanel; }
+    public EventLogPanel getEventLogPanel() { return eventLogPanel; }
+
+    public JLabel getLblStatusLeft() { return lblStatusLeft; }
+    public JLabel getLblStatusCenter() { return lblStatusCenter; }
+    public JLabel getLblStatusRight() { return lblStatusRight; }
 }
