@@ -4,13 +4,20 @@ import ve.edu.unimet.so.project2.coordinator.snapshot.SimulationSnapshot.DiskBlo
 import ve.edu.unimet.so.project2.coordinator.snapshot.SimulationSnapshot.FileSystemNodeSummary;
 
 import javax.swing.*;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class DiskVisualizationPanel extends JPanel {
 
     private final JLabel[] blockCells;
+    private final JTable allocationTable;
+    private final DefaultTableModel allocationTableModel;
     private final JLabel lblFreeBlocks;
 
     public DiskVisualizationPanel(int totalBlocks) {
@@ -34,14 +41,61 @@ public class DiskVisualizationPanel extends JPanel {
             blockCells[i] = cell;
         }
 
-        JPanel wrapperPanel = new JPanel(new BorderLayout());
-        wrapperPanel.setBackground(DarkTheme.BG_PANEL);
-        wrapperPanel.add(gridPanel, BorderLayout.NORTH);
+        JScrollPane blockScrollPane = new JScrollPane(gridPanel);
+        blockScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        blockScrollPane.getViewport().setBackground(DarkTheme.BG_PANEL);
 
-        JScrollPane scrollPane = new JScrollPane(wrapperPanel);
-        scrollPane.setBorder(BorderFactory.createEmptyBorder());
-        scrollPane.getViewport().setBackground(DarkTheme.BG_PANEL);
-        add(scrollPane, BorderLayout.CENTER);
+        allocationTableModel = new DefaultTableModel(
+                new String[]{"Archivo", "Bloques", "Primer Bloque", "Color", "Propietario"},
+                0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        allocationTable = new JTable(allocationTableModel);
+        allocationTable.setBackground(DarkTheme.BG_PANEL);
+        allocationTable.setForeground(DarkTheme.FG_PRIMARY);
+        allocationTable.setGridColor(DarkTheme.BG_HEADER);
+        allocationTable.setSelectionBackground(DarkTheme.ACCENT_BLUE);
+        allocationTable.setSelectionForeground(DarkTheme.FG_PRIMARY);
+        allocationTable.setRowHeight(24);
+        allocationTable.getTableHeader().setReorderingAllowed(false);
+
+        allocationTable.getColumnModel().getColumn(3).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(
+                    JTable table,
+                    Object value,
+                    boolean isSelected,
+                    boolean hasFocus,
+                    int row,
+                    int column) {
+                JLabel cell = (JLabel) super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                Color color = DarkTheme.getColorForId(value != null ? value.toString() : null);
+                cell.setText("");
+                cell.setOpaque(true);
+                cell.setBackground(color);
+                if (isSelected) {
+                    cell.setBorder(BorderFactory.createLineBorder(DarkTheme.FG_PRIMARY));
+                } else {
+                    cell.setBorder(BorderFactory.createEmptyBorder());
+                }
+                return cell;
+            }
+        });
+
+        JScrollPane allocationScrollPane = new JScrollPane(allocationTable);
+        allocationScrollPane.setBorder(BorderFactory.createTitledBorder("Tabla de Asignación"));
+        allocationScrollPane.getViewport().setBackground(DarkTheme.BG_PANEL);
+        allocationScrollPane.setPreferredSize(new Dimension(0, 190));
+
+        JSplitPane centerSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, blockScrollPane, allocationScrollPane);
+        centerSplit.setResizeWeight(0.70);
+        centerSplit.setDividerSize(4);
+        centerSplit.setBorder(BorderFactory.createEmptyBorder());
+
+        add(centerSplit, BorderLayout.CENTER);
 
         lblFreeBlocks = new JLabel("Bloques libres: - / " + totalBlocks);
         lblFreeBlocks.setForeground(DarkTheme.FG_PRIMARY);
@@ -53,10 +107,27 @@ public class DiskVisualizationPanel extends JPanel {
         if (blocks == null) return;
 
         Map<String, String> nodeColors = new HashMap<>();
+        List<FileSystemNodeSummary> fileNodes = new ArrayList<>();
         if (nodes != null) {
             for (FileSystemNodeSummary node : nodes) {
                 nodeColors.put(node.getNodeId(), node.getColorId());
+                if (!node.isRoot() && "FILE".equals(node.getType().name())) {
+                    fileNodes.add(node);
+                }
             }
+        }
+
+        fileNodes.sort(Comparator.comparingInt(FileSystemNodeSummary::getFirstBlockIndex));
+
+        allocationTableModel.setRowCount(0);
+        for (FileSystemNodeSummary fileNode : fileNodes) {
+            allocationTableModel.addRow(new Object[]{
+                    fileNode.getName(),
+                    fileNode.getSizeInBlocks(),
+                    fileNode.getFirstBlockIndex(),
+                    fileNode.getColorId(),
+                    fileNode.getOwnerUserId()
+            });
         }
 
         int freeCount = 0;
