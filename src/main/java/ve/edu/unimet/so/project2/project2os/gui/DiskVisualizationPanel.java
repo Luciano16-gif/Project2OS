@@ -166,10 +166,6 @@ public class DiskVisualizationPanel extends JPanel {
         lblFreeBlocks.setText("Bloques libres: " + freeCount + " / " + blocks.length);
     }
 
-    private void showError(String msg) {
-        JOptionPane.showMessageDialog(this, msg, "Error", JOptionPane.ERROR_MESSAGE);
-    }
-
     private static class BlockLabel extends JLabel {
         private static final int ARC = 8;
 

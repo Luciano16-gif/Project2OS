@@ -1,9 +1,5 @@
 # Maven
 /target/
-/mvnw
-/mvnw.cmd
-/mvnw.bat
-/.mvn/
 
 # NetBeans (just in case)
 /nbproject/private/

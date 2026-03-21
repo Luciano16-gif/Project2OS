@@ -76,7 +76,7 @@ public class GuiController {
 
         mainFrame.getComboPlaybackSpeed().addActionListener(e -> {
             String selected = (String) mainFrame.getComboPlaybackSpeed().getSelectedItem();
-            int delay = parseDelayMillis(selected, 2);
+            int delay = parseDelayMillis(selected, 0);
             runCoordinatorAction("Error actualizando velocidad de ejecución", () -> coordinator.changeExecutionDelay(delay));
             refreshTimer.setDelay(150);
             refreshTimer.setInitialDelay(150);

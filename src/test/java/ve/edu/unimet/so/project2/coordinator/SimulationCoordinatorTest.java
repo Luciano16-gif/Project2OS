@@ -2320,6 +2320,65 @@ class SimulationCoordinatorTest {
         assertDoesNotThrow(() -> invokePrivateVoidMethod(coordinator, "saveSystemState", Path.class, savePath));
     }
 
+        @Test
+        void stepModeRequiresManualPermitsToAdvanceSimulation() {
+                coordinator = createCoordinator(new LockTable(), new JournalManager());
+                coordinator.start();
+
+                coordinator.setStepModeEnabled(true);
+                coordinator.submitIntent(new CreateFileIntent("/home-user-1", "manual-step.txt", 1, false, false));
+
+                LockSupport.parkNanos(250_000_000L);
+                SimulationSnapshot pausedSnapshot = coordinator.getLatestSnapshot();
+                assertNotNull(pausedSnapshot);
+                assertNull(findFileSystemNodeByPath(pausedSnapshot, "/home-user-1/manual-step.txt"));
+                assertEquals(0, pausedSnapshot.getTerminatedProcessesSnapshot().length);
+
+                coordinator.stepSimulationOnce();
+                LockSupport.parkNanos(150_000_000L);
+                SimulationSnapshot afterFirstStep = coordinator.getLatestSnapshot();
+                assertNotNull(afterFirstStep);
+                assertEquals(0, afterFirstStep.getTerminatedProcessesSnapshot().length);
+
+                coordinator.stepSimulationOnce();
+                SimulationSnapshot completedSnapshot = waitForSnapshot(
+                                s -> findFileSystemNodeByPath(s, "/home-user-1/manual-step.txt") != null);
+
+                assertNotNull(findFileSystemNodeByPath(completedSnapshot, "/home-user-1/manual-step.txt"));
+        }
+
+        @Test
+        void stepCommandForcesManualModeEvenIfPlaybackWasAutomatic() {
+                coordinator = createCoordinator(new LockTable(), new JournalManager());
+                coordinator.start();
+
+                coordinator.setStepModeEnabled(false);
+                coordinator.stepSimulationOnce();
+
+                long deadline = System.currentTimeMillis() + 2000L;
+                while (System.currentTimeMillis() < deadline && !coordinator.isStepModeEnabled()) {
+                        LockSupport.parkNanos(10_000_000L);
+                }
+
+                assertTrue(coordinator.isStepModeEnabled(), "step command should switch coordinator to manual mode");
+        }
+
+        @Test
+        void executionDelayCanBeUpdatedAndRejectsNegativeValues() {
+                coordinator = createCoordinator(new LockTable(), new JournalManager());
+                coordinator.start();
+
+                assertThrows(IllegalArgumentException.class, () -> coordinator.changeExecutionDelay(-1L));
+
+                coordinator.changeExecutionDelay(25L);
+                long deadline = System.currentTimeMillis() + 2000L;
+                while (System.currentTimeMillis() < deadline && coordinator.getExecutionDelayMillis() != 25L) {
+                        LockSupport.parkNanos(10_000_000L);
+                }
+
+                assertEquals(25L, coordinator.getExecutionDelayMillis());
+        }
+
     private SimulationCoordinator createCoordinator(LockTable lockTable, JournalManager journalManager) {
         return new SimulationCoordinator(
                 new SimulatedDisk(200, 10, DiskHeadDirection.UP),
