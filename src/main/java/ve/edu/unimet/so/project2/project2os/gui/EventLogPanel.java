@@ -9,6 +9,7 @@ public class EventLogPanel extends JPanel {
 
     private final JTextArea textArea;
     private long lastSeenSequence = -1;
+    private static final String CATEGORY_PLAYBACK = "PLAYBACK";
 
     public EventLogPanel() {
         setLayout(new BorderLayout());
@@ -30,13 +31,31 @@ public class EventLogPanel extends JPanel {
     public void updateFromSnapshot(EventLogEntrySummary[] entries) {
         if (entries == null) return;
 
+        if (entries.length == 0) {
+            if (lastSeenSequence >= 0) {
+                textArea.setText("");
+            }
+            lastSeenSequence = -1;
+            return;
+        }
+
+        // Backend reinitializations can reset sequence numbering; restart local tracking to avoid a dead panel.
+        if (entries[0].getSequenceNumber() <= lastSeenSequence) {
+            textArea.setText("");
+            lastSeenSequence = -1;
+        }
+
         boolean added = false;
         for (EventLogEntrySummary entry : entries) {
-            if (entry.getSequenceNumber() > lastSeenSequence) {
-                lastSeenSequence = entry.getSequenceNumber();
-                textArea.append(entry.getCategory() + " (" + entry.getTick() + "): " + entry.getMessage() + "\n");
-                added = true;
+            if (entry.getSequenceNumber() <= lastSeenSequence) {
+                continue;
             }
+            lastSeenSequence = entry.getSequenceNumber();
+            if (CATEGORY_PLAYBACK.equalsIgnoreCase(entry.getCategory())) {
+                continue;
+            }
+            textArea.append(entry.getCategory() + " (" + entry.getTick() + "): " + entry.getMessage() + "\n");
+            added = true;
         }
         
         if (added) {
@@ -46,5 +65,6 @@ public class EventLogPanel extends JPanel {
     
     public void clearLog() {
         textArea.setText("");
+        lastSeenSequence = -1;
     }
 }

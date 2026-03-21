@@ -4,6 +4,7 @@ import ve.edu.unimet.so.project2.coordinator.snapshot.SimulationSnapshot.DiskBlo
 import ve.edu.unimet.so.project2.coordinator.snapshot.SimulationSnapshot.FileSystemNodeSummary;
 
 import javax.swing.*;
+import javax.swing.border.TitledBorder;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
@@ -15,25 +16,23 @@ import java.util.Map;
 
 public class DiskVisualizationPanel extends JPanel {
 
-    private final BlockLabel[] blockCells;
+    private BlockLabel[] blockCells;
+    private final JPanel gridPanel;
     private final JTable allocationTable;
     private final DefaultTableModel allocationTableModel;
     private final JLabel lblFreeBlocks;
+    private final JLabel lblHeadInfo;
 
     public DiskVisualizationPanel(int totalBlocks) {
         setLayout(new BorderLayout());
         setBackground(DarkTheme.BG_PANEL);
 
-        JPanel gridPanel = new JPanel(new GridLayout(0, 24, 2, 2));
+        gridPanel = new JPanel(new GridLayout(0, 24, 2, 2));
         gridPanel.setBackground(DarkTheme.BG_PANEL);
         gridPanel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 
-        blockCells = new BlockLabel[totalBlocks];
-        for (int i = 0; i < totalBlocks; i++) {
-            BlockLabel cell = new BlockLabel(i);
-            gridPanel.add(cell);
-            blockCells[i] = cell;
-        }
+        blockCells = new BlockLabel[0];
+        rebuildBlockCells(totalBlocks);
 
         JPanel gridWrapper = new JPanel(new BorderLayout());
         gridWrapper.setBackground(DarkTheme.BG_PANEL);
@@ -84,7 +83,9 @@ public class DiskVisualizationPanel extends JPanel {
         });
 
         JScrollPane allocationScrollPane = new JScrollPane(allocationTable);
-        allocationScrollPane.setBorder(BorderFactory.createTitledBorder("Tabla de Asignación"));
+        TitledBorder allocationBorder = BorderFactory.createTitledBorder("Tabla de Asignación");
+        allocationBorder.setTitleColor(DarkTheme.ACCENT_YELLOW);
+        allocationScrollPane.setBorder(allocationBorder);
         allocationScrollPane.getViewport().setBackground(DarkTheme.BG_PANEL);
         allocationScrollPane.setPreferredSize(new Dimension(0, 400));
 
@@ -97,12 +98,22 @@ public class DiskVisualizationPanel extends JPanel {
 
         lblFreeBlocks = new JLabel("Bloques libres: - / " + totalBlocks);
         lblFreeBlocks.setForeground(DarkTheme.FG_PRIMARY);
-        lblFreeBlocks.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
-        add(lblFreeBlocks, BorderLayout.SOUTH);
+        lblHeadInfo = new JLabel("Cabeza: -");
+        lblHeadInfo.setForeground(DarkTheme.FG_SECONDARY);
+
+        JPanel footerPanel = new JPanel(new GridLayout(2, 1, 0, 2));
+        footerPanel.setOpaque(false);
+        footerPanel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+        footerPanel.add(lblFreeBlocks);
+        footerPanel.add(lblHeadInfo);
+        add(footerPanel, BorderLayout.SOUTH);
     }
 
-    public void updateFromSnapshot(DiskBlockSummary[] blocks, FileSystemNodeSummary[] nodes) {
+    public void updateFromSnapshot(DiskBlockSummary[] blocks, FileSystemNodeSummary[] nodes, int headBlockIndex) {
         if (blocks == null) return;
+        if (blockCells.length != blocks.length) {
+            rebuildBlockCells(blocks.length);
+        }
 
         Map<String, String> nodeColors = new HashMap<>();
         List<FileSystemNodeSummary> fileNodes = new ArrayList<>();
@@ -146,6 +157,8 @@ public class DiskVisualizationPanel extends JPanel {
                 double luma = 0.299 * bg.getRed() + 0.587 * bg.getGreen() + 0.114 * bg.getBlue();
                 cell.setForeground(luma > 140 ? Color.BLACK : Color.WHITE);
             }
+            
+            cell.setHead(block.getIndex() == headBlockIndex);
 
             StringBuilder tooltip = new StringBuilder("<html>");
             tooltip.append("<b>Bloque ").append(block.getIndex()).append("</b><br>");
@@ -164,10 +177,38 @@ public class DiskVisualizationPanel extends JPanel {
         }
 
         lblFreeBlocks.setText("Bloques libres: " + freeCount + " / " + blocks.length);
+        lblHeadInfo.setText(buildHeadInfo(blocks, headBlockIndex));
+    }
+
+    private void rebuildBlockCells(int totalBlocks) {
+        gridPanel.removeAll();
+        blockCells = new BlockLabel[totalBlocks];
+        for (int i = 0; i < totalBlocks; i++) {
+            BlockLabel cell = new BlockLabel(i);
+            gridPanel.add(cell);
+            blockCells[i] = cell;
+        }
+        gridPanel.revalidate();
+        gridPanel.repaint();
+    }
+
+    private String buildHeadInfo(DiskBlockSummary[] blocks, int headBlockIndex) {
+        if (headBlockIndex < 0 || headBlockIndex >= blocks.length) {
+            return "Cabeza: fuera de rango";
+        }
+        DiskBlockSummary head = blocks[headBlockIndex];
+        String state = head.isFree() ? "Libre" : "Ocupado";
+        String owner = head.isFree() ? "-" : head.getOwnerFileId();
+        String next = head.getNextBlockIndex() == -1 ? "-" : String.valueOf(head.getNextBlockIndex());
+        return "Cabeza: Bloque " + headBlockIndex
+                + " | Estado: " + state
+                + " | Archivo: " + owner
+                + " | Sig.: " + next;
     }
 
     private static class BlockLabel extends JLabel {
         private static final int ARC = 8;
+        private boolean isHead = false;
 
         public BlockLabel(int index) {
             super(String.valueOf(index), SwingConstants.CENTER);
@@ -179,6 +220,11 @@ public class DiskVisualizationPanel extends JPanel {
             setToolTipText("Block " + index);
         }
 
+        public void setHead(boolean isHead) {
+            this.isHead = isHead;
+            repaint();
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
@@ -187,9 +233,24 @@ public class DiskVisualizationPanel extends JPanel {
             g2.setColor(getBackground());
             g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
             
-            // Subtle border
-            g2.setColor(getBackground().darker());
-            g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
+            if (isHead) {
+                Color bg = getBackground();
+                double luma = 0.299 * bg.getRed() + 0.587 * bg.getGreen() + 0.114 * bg.getBlue();
+                
+                // Si el fondo es muy claro, usamos un amarillo más oscuro para contraste
+                if (luma > 160) {
+                    g2.setColor(new Color(180, 120, 0)); // Un tono ámbar/marrón oscuro
+                } else {
+                    g2.setColor(DarkTheme.ACCENT_YELLOW);
+                }
+                
+                g2.setStroke(new BasicStroke(2.5f));
+                g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, ARC, ARC);
+            } else {
+                g2.setColor(getBackground().darker());
+                g2.setStroke(new BasicStroke(1f));
+                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
+            }
 
             super.paintComponent(g2);
             g2.dispose();

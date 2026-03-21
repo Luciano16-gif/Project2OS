@@ -32,7 +32,12 @@ public class JournalPanel extends JPanel {
         
         listModel.clear();
         for (JournalEntrySummary entry : entries) {
-            String text = entry.getOperationType() + " '" + entry.getTargetPath() + "': " + entry.getStatus();
+            String owner = entry.getOwnerUserId() == null ? "-" : entry.getOwnerUserId();
+            String text = entry.getTransactionId()
+                    + " | " + entry.getStatus()
+                    + " | " + entry.getOperationType()
+                    + " | " + entry.getTargetPath()
+                    + " | " + owner;
             listModel.addElement(text);
         }
     }

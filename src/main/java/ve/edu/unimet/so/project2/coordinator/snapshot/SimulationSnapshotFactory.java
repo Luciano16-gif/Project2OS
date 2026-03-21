@@ -135,6 +135,7 @@ public final class SimulationSnapshotFactory {
                     entry.getTransactionId(),
                     entry.getOperationType(),
                     entry.getTargetPath(),
+                    entry.getOwnerUserId(),
                     entry.getStatus());
         }
         return summaries;

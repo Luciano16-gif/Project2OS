@@ -265,6 +265,14 @@ public final class SimulationCoordinator {
         channels.enqueueCommand(new StepSimulationCoordinatorCommand());
     }
 
+    public boolean isSimulatedFailureArmed() {
+        return simulatedFailureArmed;
+    }
+
+    public boolean isRecoveryQuarantineActive() {
+        return recoveryQuarantineActive;
+    }
+
     public SimulationSnapshot getLatestSnapshot() {
         return latestSnapshot;
     }
@@ -292,6 +300,19 @@ public final class SimulationCoordinator {
     public void recoverPendingJournalEntries() {
         requireStartedAndAcceptingCommands();
         runSynchronously(new RecoverPendingJournalCoordinatorCommand());
+    }
+
+    public void resetSimulation() {
+        requireStartedAndAcceptingCommands();
+        runSynchronously(new ResetSimulationCoordinatorCommand(disk.getTotalBlocks()));
+    }
+
+    public void resetSimulation(int totalBlocks) {
+        if (totalBlocks <= 0) {
+            throw new IllegalArgumentException("totalBlocks must be > 0");
+        }
+        requireStartedAndAcceptingCommands();
+        runSynchronously(new ResetSimulationCoordinatorCommand(totalBlocks));
     }
 
     private void runCoordinatorLoop() {
@@ -849,6 +870,28 @@ public final class SimulationCoordinator {
         publishSnapshot();
     }
 
+    private void resetSimulationState(int totalBlocks) {
+        ensureCoordinatorIdleForAdminOperation();
+        if (totalBlocks <= 0) {
+            throw new IllegalArgumentException("totalBlocks must be > 0");
+        }
+
+        DiskHeadDirection currentDirection = disk.getHead().getDirection();
+        SimulationApplicationState defaultState = SimulationApplicationState.createDefault();
+        SimulatedDisk resetDisk = new SimulatedDisk(totalBlocks, 0, currentDirection);
+
+        applyLoadedState(
+                resetDisk,
+                defaultState,
+                new JournalManager(),
+                activePolicy);
+        executionDelayMillis = 0L;
+        stepModeEnabled = false;
+        pendingStepPermits = 0;
+        recordEvent("SYSTEM", "simulation reset to defaults with " + totalBlocks + " blocks");
+        publishSnapshot();
+    }
+
     private void validateScenarioIntents(ScenarioOperationIntent[] intents, SimulatedDisk targetDisk) {
         for (int i = 0; i < intents.length; i++) {
             ScenarioOperationIntent intent = intents[i];
@@ -1397,6 +1440,7 @@ public final class SimulationCoordinator {
         recordEvent(
                 "CRASH",
                 "coordinator quarantined after simulated crash in process " + crashedCommand.getProcessId());
+        recordEvent("CRASH", "system quarantined until recovery");
     }
 
     private void cancelPendingSubmissionsDueToCrash(String reason) {
@@ -1572,6 +1616,7 @@ public final class SimulationCoordinator {
                 return;
             }
             activePolicy = policy;
+            recordEvent("SCHEDULER", "disk scheduling policy changed to " + policy.name());
         }
     }
 
@@ -1694,6 +1739,10 @@ public final class SimulationCoordinator {
 
         @Override
         public void execute() {
+            if (recoveryQuarantineActive) {
+                recordEvent("CRASH", "ignored simulated failure arm during recovery quarantine");
+                return;
+            }
             simulatedFailureArmed = true;
             recordEvent("CRASH", "simulated failure armed for next successful journaled operation");
         }
@@ -1704,6 +1753,20 @@ public final class SimulationCoordinator {
         @Override
         public void execute() {
             recoverPendingJournalEntriesInMemory();
+        }
+    }
+
+    private final class ResetSimulationCoordinatorCommand implements CoordinatorCommand {
+
+        private final int totalBlocks;
+
+        private ResetSimulationCoordinatorCommand(int totalBlocks) {
+            this.totalBlocks = totalBlocks;
+        }
+
+        @Override
+        public void execute() {
+            resetSimulationState(totalBlocks);
         }
     }
 

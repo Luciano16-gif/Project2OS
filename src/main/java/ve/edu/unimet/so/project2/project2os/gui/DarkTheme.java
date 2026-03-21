@@ -75,10 +75,15 @@ public class DarkTheme {
         UIManager.put("Label.foreground", FG_PRIMARY);
         UIManager.put("Button.background", BG_HEADER);
         UIManager.put("Button.foreground", FG_PRIMARY);
-        UIManager.put("ComboBox.background", BG_HEADER);
+        UIManager.put("ComboBox.background", BG_PANEL);
         UIManager.put("ComboBox.foreground", FG_PRIMARY);
-        UIManager.put("ComboBox.selectionBackground", ACCENT_BLUE);
+        UIManager.put("ComboBox.selectionBackground", BG_HEADER);
         UIManager.put("ComboBox.selectionForeground", FG_PRIMARY);
+        UIManager.put("ComboBox.buttonBackground", BG_HEADER);
+        UIManager.put("ComboBox.buttonShadow", BG_DARK);
+        UIManager.put("ComboBox.buttonDarkShadow", BG_DARK);
+        UIManager.put("ComboBox.buttonHighlight", FG_SECONDARY);
+        UIManager.put("ComboBox.border", BorderFactory.createLineBorder(BG_HEADER));
         UIManager.put("TextField.background", BG_PANEL);
         UIManager.put("TextField.foreground", FG_PRIMARY);
         UIManager.put("TextField.caretForeground", FG_PRIMARY);

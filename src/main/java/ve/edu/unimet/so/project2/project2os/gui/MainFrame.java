@@ -10,6 +10,7 @@ public class MainFrame extends JFrame {
     private JButton btnPolicyChange;
     private JButton btnSaveSystem, btnLoadSystem, btnLoadScenario;
     private JButton btnPlay, btnPause, btnStep;
+    private JButton btnAdvanced;
     private JComboBox<String> comboPlaybackSpeed;
     private JLabel lblCycle;
 
@@ -94,6 +95,9 @@ public class MainFrame extends JFrame {
         lblCycle.setForeground(DarkTheme.FG_PRIMARY);
         topToolbar.add(Box.createHorizontalStrut(50));
         topToolbar.add(lblCycle);
+
+        btnAdvanced = DarkTheme.styledButton("Avanzado");
+        topToolbar.add(btnAdvanced);
 
         add(topToolbar, BorderLayout.NORTH);
 
@@ -204,6 +208,7 @@ public class MainFrame extends JFrame {
     public JButton getBtnPlay() { return btnPlay; }
     public JButton getBtnPause() { return btnPause; }
     public JButton getBtnStep() { return btnStep; }
+    public JButton getBtnAdvanced() { return btnAdvanced; }
     public JComboBox<String> getComboPlaybackSpeed() { return comboPlaybackSpeed; }
     public JLabel getLblCycle() { return lblCycle; }
     public JButton getBtnCreateFile() { return btnCreateFile; }

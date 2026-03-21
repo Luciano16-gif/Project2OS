@@ -1113,14 +1113,14 @@ class SimulationCoordinatorTest {
                 snapshot.getTerminatedProcessesSnapshot()[1].getResultStatus());
     }
 
-    @Test
-    void userCanReadPublicForeignFileButCannotDeleteIt() {
+        @Test
+        void userCanReadPrivateForeignFileButCannotDeleteIt() {
         coordinator = createCoordinator(new LockTable(), new JournalManager());
         coordinator.start();
 
         coordinator.submitIntent(new SwitchSessionIntent("user-2"));
         waitForSnapshot(s -> "user-2".equals(s.getSessionSummary().getCurrentUserId()));
-        coordinator.submitIntent(new CreateFileIntent("/home-user-2", "shared.txt", 1, true, false));
+                coordinator.submitIntent(new CreateFileIntent("/home-user-2", "shared.txt", 1, false, false));
         waitForSnapshot(s -> s.getTerminatedProcessesSnapshot().length == 1);
 
         coordinator.submitIntent(new SwitchSessionIntent("user-1"));
@@ -1138,6 +1138,29 @@ class SimulationCoordinatorTest {
         assertEquals(ve.edu.unimet.so.project2.process.ResultStatus.FAILED, failedDelete.getResultStatus());
         assertTrue(failedDelete.getErrorMessage().contains("cannot modify"));
         assertNotNull(findFileSystemNodeByPath(afterDelete, "/home-user-2/shared.txt"));
+    }
+
+    @Test
+    void userCanCreateSystemFileDirectlyUnderRoot() {
+        coordinator = createCoordinator(new LockTable(), new JournalManager());
+        coordinator.start();
+
+        coordinator.submitIntent(new SwitchSessionIntent("user-1"));
+        waitForSnapshot(s -> "user-1".equals(s.getSessionSummary().getCurrentUserId()));
+
+        coordinator.submitIntent(new CreateFileIntent("/", "user-owned-system.bin", 1, false, true));
+
+        SimulationSnapshot snapshot = waitForSnapshot(s ->
+                s.getTerminatedProcessesSnapshot().length == 1
+                        && findFileSystemNodeByPath(s, "/user-owned-system.bin") != null);
+        SimulationSnapshot.ProcessSnapshot createResult = snapshot.getTerminatedProcessesSnapshot()[0];
+        SimulationSnapshot.FileSystemNodeSummary created =
+                findFileSystemNodeByPath(snapshot, "/user-owned-system.bin");
+
+        assertEquals(ve.edu.unimet.so.project2.process.ResultStatus.SUCCESS, createResult.getResultStatus());
+        assertNotNull(created);
+        assertEquals("user-1", created.getOwnerUserId());
+        assertTrue(created.isSystemFile());
     }
 
     @Test

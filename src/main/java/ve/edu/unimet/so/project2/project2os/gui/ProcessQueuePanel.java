@@ -73,13 +73,20 @@ public class ProcessQueuePanel extends JPanel {
         dot.setForeground(dotColor);
         dot.setFont(dot.getFont().deriveFont(14f));
         
-        JLabel name = new JLabel(p.getProcessId() + " (" + p.getOperationType() + ")");
+        JLabel name = new JLabel(
+            p.getProcessId()
+                + " | " + p.getOperationType()
+                + " | " + p.getTargetPath()
+                + " | " + p.getState());
         name.setForeground(DarkTheme.FG_PRIMARY);
         
         panel.add(dot);
         panel.add(name);
         
-        panel.setToolTipText(p.getTargetPath() + " -> " + p.getState());
+        panel.setToolTipText(
+            "request=" + p.getRequestId()
+                + " | owner=" + p.getOwnerUserId()
+                + " | state=" + p.getState());
         contentPanel.add(panel);
     }
 }

@@ -14,14 +14,18 @@ public class GuiController {
     private final SimulationCoordinator coordinator;
     private final MainFrame mainFrame;
     private final Timer refreshTimer;
+    private boolean recoveryPopupShown;
+
+    private static final String ARMED_TOOLTIP = "El próximo commit journaled disparará un fallo simulado";
 
     public GuiController(SimulationCoordinator coordinator, MainFrame mainFrame) {
         this.coordinator = coordinator;
         this.mainFrame = mainFrame;
+        this.recoveryPopupShown = false;
 
         // Refresh at 150ms intervals
         this.refreshTimer = new Timer(150, e -> refreshFromSnapshot());
-        
+
         setupListeners();
         refreshTimer.start();
         updatePlaybackLabel();
@@ -36,17 +40,19 @@ public class GuiController {
             coordinator.switchSession("user-1");
             refreshFromSnapshot();
         }));
-        
+
         mainFrame.getBtnPolicyChange().addActionListener(e -> {
             String policyStr = (String) mainFrame.getComboPolicy().getSelectedItem();
             if (policyStr != null) {
-                runCoordinatorAction("Error cambiando política", () -> coordinator.changePolicy(DiskSchedulingPolicy.valueOf(policyStr)));
+                runCoordinatorAction("Error cambiando política",
+                        () -> coordinator.changePolicy(DiskSchedulingPolicy.valueOf(policyStr)));
             }
         });
 
         mainFrame.getBtnSaveSystem().addActionListener(e -> handleSaveSystem());
         mainFrame.getBtnLoadSystem().addActionListener(e -> handleLoadSystem());
         mainFrame.getBtnLoadScenario().addActionListener(e -> handleLoadScenario());
+        mainFrame.getBtnAdvanced().addActionListener(e -> handleAdvancedOptions());
 
         mainFrame.getBtnStats().addActionListener(e -> showStatisticsDialog());
 
@@ -77,7 +83,8 @@ public class GuiController {
         mainFrame.getComboPlaybackSpeed().addActionListener(e -> {
             String selected = (String) mainFrame.getComboPlaybackSpeed().getSelectedItem();
             int delay = parseDelayMillis(selected, 0);
-            runCoordinatorAction("Error actualizando velocidad de ejecución", () -> coordinator.changeExecutionDelay(delay));
+            runCoordinatorAction("Error actualizando velocidad de ejecución",
+                    () -> coordinator.changeExecutionDelay(delay));
             refreshTimer.setDelay(150);
             refreshTimer.setInitialDelay(150);
             updatePlaybackLabel(delay);
@@ -90,10 +97,12 @@ public class GuiController {
                 return;
             }
             String name = JOptionPane.showInputDialog(mainFrame, "Nombre del archivo:");
-            if (name == null || name.isBlank()) return;
+            if (name == null || name.isBlank())
+                return;
             String sizeStr = JOptionPane.showInputDialog(mainFrame, "Tamaño en bloques:");
-            if (sizeStr == null || sizeStr.isBlank()) return;
-            
+            if (sizeStr == null || sizeStr.isBlank())
+                return;
+
             try {
                 int size = Integer.parseInt(sizeStr);
                 coordinator.submitIntent(new CreateFileIntent(parent, name, size, false, false));
@@ -109,7 +118,8 @@ public class GuiController {
                 return;
             }
             String name = JOptionPane.showInputDialog(mainFrame, "Nombre del directorio:");
-            if (name == null || name.isBlank()) return;
+            if (name == null || name.isBlank())
+                return;
             try {
                 coordinator.submitIntent(new CreateDirectoryIntent(parent, name, false));
             } catch (Exception ex) {
@@ -137,7 +147,8 @@ public class GuiController {
                 return;
             }
             String name = JOptionPane.showInputDialog(mainFrame, "Nuevo nombre:");
-            if (name == null || name.isBlank()) return;
+            if (name == null || name.isBlank())
+                return;
             try {
                 coordinator.submitIntent(new RenameIntent(target, name));
             } catch (Exception ex) {
@@ -151,7 +162,8 @@ public class GuiController {
                 showError("Seleccione un nodo en el árbol.");
                 return;
             }
-            int confirm = JOptionPane.showConfirmDialog(mainFrame, "¿Seguro que desea eliminar " + target + "?", "Confirmar Eliminación", JOptionPane.YES_NO_OPTION);
+            int confirm = JOptionPane.showConfirmDialog(mainFrame, "¿Seguro que desea eliminar " + target + "?",
+                    "Confirmar Eliminación", JOptionPane.YES_NO_OPTION);
             if (confirm == JOptionPane.YES_OPTION) {
                 try {
                     coordinator.submitIntent(new DeleteIntent(target));
@@ -164,16 +176,15 @@ public class GuiController {
         mainFrame.getBtnSimularFallo().addActionListener(e -> {
             runCoordinatorAction("Error armando fallo simulado", () -> {
                 coordinator.armSimulatedFailure();
-                mainFrame.getLblSystemState().setText("Estado del Sistema: FALLO ARMADO");
-                mainFrame.getLblSystemState().setForeground(DarkTheme.ACCENT_RED);
+                refreshFromSnapshot();
             });
         });
 
         mainFrame.getBtnRecovery().addActionListener(e -> {
             runCoordinatorAction("Error ejecutando recovery", () -> {
                 coordinator.recoverPendingJournalEntries();
-                mainFrame.getLblSystemState().setText("Estado del Sistema: Normal");
-                mainFrame.getLblSystemState().setForeground(DarkTheme.FG_PRIMARY);
+                refreshFromSnapshot();
+                JOptionPane.showMessageDialog(mainFrame, "Recovery completado.", "Recovery", JOptionPane.INFORMATION_MESSAGE);
             });
         });
     }
@@ -186,7 +197,8 @@ public class GuiController {
         try {
             coordinator.saveSystem(selected);
             refreshFromSnapshot();
-            JOptionPane.showMessageDialog(mainFrame, "Sistema guardado en:\n" + selected, "Guardado", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(mainFrame, "Sistema guardado en:\n" + selected, "Guardado",
+                    JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
             showError("Error guardando sistema: " + ex.getMessage());
         }
@@ -200,7 +212,8 @@ public class GuiController {
         try {
             coordinator.loadSystem(selected);
             refreshFromSnapshot();
-            JOptionPane.showMessageDialog(mainFrame, "Sistema cargado desde:\n" + selected, "Carga completada", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(mainFrame, "Sistema cargado desde:\n" + selected, "Carga completada",
+                    JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
             showError("Error cargando sistema: " + ex.getMessage());
         }
@@ -220,10 +233,105 @@ public class GuiController {
         try {
             coordinator.loadScenario(selected);
             refreshFromSnapshot();
-            JOptionPane.showMessageDialog(mainFrame, "Escenario cargado desde:\n" + selected, "Escenario cargado", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(mainFrame, "Escenario cargado desde:\n" + selected, "Escenario cargado",
+                    JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
             showError("Error cargando escenario: " + ex.getMessage());
         }
+    }
+
+    private void handleAdvancedOptions() {
+        String[] options = new String[] {
+                "Resetear simulación",
+                "Cambiar cantidad de bloques",
+                "Cancelar"
+        };
+        int selection = JOptionPane.showOptionDialog(
+                mainFrame,
+                "Seleccione una acción avanzada",
+                "Opciones Avanzadas",
+                JOptionPane.DEFAULT_OPTION,
+                JOptionPane.PLAIN_MESSAGE,
+                null,
+                options,
+                options[0]);
+
+        if (selection == 0) {
+            handleResetSimulation();
+        } else if (selection == 1) {
+            handleChangeBlockCount();
+        }
+    }
+
+    private void handleResetSimulation() {
+        int confirm = JOptionPane.showConfirmDialog(
+                mainFrame,
+                "Se reseteará la simulación al estado inicial.\n¿Desea continuar?",
+                "Confirmar Reset",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+        if (confirm != JOptionPane.YES_OPTION) {
+            return;
+        }
+
+        try {
+            coordinator.resetSimulation();
+            refreshFromSnapshot();
+            JOptionPane.showMessageDialog(
+                    mainFrame,
+                    "La simulación fue reseteada correctamente.",
+                    "Reset completado",
+                    JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            showError("Error reseteando simulación: " + ex.getMessage());
+        }
+    }
+
+    private void handleChangeBlockCount() {
+        SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
+        if (hasSimulationRun(snapshot)) {
+            showError("Solo puedes cambiar la cantidad de bloques si la simulación no ha corrido nada.\n"
+                    + "Esto aplica al inicio o justo después de un reset.");
+            return;
+        }
+
+        Integer[] options = {50, 100, 150, 200, 300, 400, 500};
+        int currentBlocks = snapshot != null ? snapshot.getDiskBlocksSnapshot().length : 100;
+
+        Integer selectedOption = (Integer) JOptionPane.showInputDialog(
+                mainFrame,
+                "Seleccione la nueva cantidad de bloques:",
+                "Cambiar cantidad de bloques",
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                options,
+                currentBlocks > 0 ? currentBlocks : 100);
+
+        if (selectedOption == null) {
+            return;
+        }
+
+        try {
+            coordinator.resetSimulation(selectedOption);
+            refreshFromSnapshot();
+            JOptionPane.showMessageDialog(
+                    mainFrame,
+                    "Cantidad de bloques actualizada a " + selectedOption + ".",
+                    "Bloques actualizados",
+                    JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            showError("Error cambiando cantidad de bloques: " + ex.getMessage());
+        }
+    }
+
+    private boolean hasSimulationRun(SimulationSnapshot snapshot) {
+        if (snapshot == null) {
+            return false;
+        }
+        return snapshot.getTerminatedProcessesSnapshot().length > 0
+                || snapshot.getDispatchHistorySnapshot().length > 0
+                || snapshot.getJournalEntriesSnapshot().length > 0
+                || snapshot.getTotalSeekDistance() > 0;
     }
 
     private boolean isCoordinatorIdle(SimulationSnapshot snapshot) {
@@ -367,45 +475,88 @@ public class GuiController {
         }
     }
 
-    private void updateCrudButtonsByRole(SimulationSnapshot snapshot) {
-        boolean adminSession = false;
-        if (snapshot != null && snapshot.getSessionSummary() != null && snapshot.getSessionSummary().getCurrentRole() != null) {
-            adminSession = "ADMIN".equalsIgnoreCase(snapshot.getSessionSummary().getCurrentRole().name());
+    private void updateActionButtonsBySystemState(boolean recoveryRequired) {
+        boolean enableGeneralActions = !recoveryRequired;
+
+        // ADMIN y USER comparten acciones CRUD; en quarantine quedan bloqueadas.
+        mainFrame.getBtnCreateFile().setEnabled(enableGeneralActions);
+        mainFrame.getBtnCreateDir().setEnabled(enableGeneralActions);
+        mainFrame.getBtnRead().setEnabled(enableGeneralActions);
+        mainFrame.getBtnRename().setEnabled(enableGeneralActions);
+        mainFrame.getBtnDelete().setEnabled(enableGeneralActions);
+        mainFrame.getBtnSaveSystem().setEnabled(enableGeneralActions);
+        mainFrame.getBtnLoadScenario().setEnabled(enableGeneralActions);
+
+        mainFrame.getBtnStats().setEnabled(true);
+        mainFrame.getBtnLoadSystem().setEnabled(true);
+        mainFrame.getBtnRecovery().setEnabled(true);
+        mainFrame.getBtnAdvanced().setEnabled(true);
+    }
+
+    private void updateFailureUxState(boolean failureArmed, boolean recoveryRequired) {
+        if (recoveryRequired) {
+            mainFrame.getLblSystemState().setText("Estado del Sistema: Recovery requerido");
+            mainFrame.getLblSystemState().setForeground(DarkTheme.ACCENT_RED);
+            mainFrame.getLblSystemState().setToolTipText("Se requiere ejecutar Recovery antes de continuar");
+            if (!recoveryPopupShown) {
+                recoveryPopupShown = true;
+                JOptionPane.showMessageDialog(
+                        mainFrame,
+                        "Se produjo un fallo simulado. Debe ejecutar Recovery antes de continuar.",
+                        "Fallo simulado",
+                        JOptionPane.WARNING_MESSAGE);
+            }
+            return;
         }
 
-        mainFrame.getBtnCreateFile().setEnabled(adminSession);
-        mainFrame.getBtnCreateDir().setEnabled(adminSession);
-        mainFrame.getBtnRename().setEnabled(adminSession);
-        mainFrame.getBtnDelete().setEnabled(adminSession);
-        // Lectura y estadísticas siguen habilitadas para usuarios regulares.
-        mainFrame.getBtnRead().setEnabled(true);
-        mainFrame.getBtnStats().setEnabled(true);
+        recoveryPopupShown = false;
+        if (failureArmed) {
+            mainFrame.getLblSystemState().setText("Estado del Sistema: Fallo armado");
+            mainFrame.getLblSystemState().setForeground(DarkTheme.ACCENT_YELLOW);
+            mainFrame.getLblSystemState().setToolTipText(ARMED_TOOLTIP);
+            return;
+        }
+
+        mainFrame.getLblSystemState().setText("Estado del Sistema: Normal");
+        mainFrame.getLblSystemState().setForeground(DarkTheme.FG_PRIMARY);
+        mainFrame.getLblSystemState().setToolTipText(null);
     }
 
     private void refreshFromSnapshot() {
         SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
-        if (snapshot == null) return;
+        if (snapshot == null)
+            return;
 
-        updateCrudButtonsByRole(snapshot);
+        boolean recoveryRequired = coordinator.isRecoveryQuarantineActive();
+        boolean failureArmed = coordinator.isSimulatedFailureArmed() && !recoveryRequired;
+
+        updateActionButtonsBySystemState(recoveryRequired);
+        updateFailureUxState(failureArmed, recoveryRequired);
 
         mainFrame.getFileSystemTreePanel().updateFromSnapshot(snapshot.getFileSystemNodesSnapshot());
-        mainFrame.getDiskVisualizationPanel().updateFromSnapshot(snapshot.getDiskBlocksSnapshot(), snapshot.getFileSystemNodesSnapshot());
+        mainFrame.getDiskVisualizationPanel().updateFromSnapshot(snapshot.getDiskBlocksSnapshot(),
+                snapshot.getFileSystemNodesSnapshot(), snapshot.getHeadBlock());
         mainFrame.getJournalPanel().updateFromSnapshot(snapshot.getJournalEntriesSnapshot());
         mainFrame.getProcessQueuePanel().updateFromSnapshot(
                 snapshot.getRunningProcessSnapshot(),
                 snapshot.getReadyProcessesSnapshot(),
                 snapshot.getBlockedProcessesSnapshot(),
-                snapshot.getTerminatedProcessesSnapshot()
-        );
+                snapshot.getTerminatedProcessesSnapshot());
         mainFrame.getEventLogPanel().updateFromSnapshot(snapshot.getEventLogEntriesSnapshot());
 
-        mainFrame.getLblStatusLeft().setText("Cabeza: Block " + snapshot.getHeadBlock() + " (" + snapshot.getHeadDirection() + ") | Política: " + snapshot.getPolicy());
-        
+        mainFrame.getLblStatusLeft().setText("Cabeza: Block " + snapshot.getHeadBlock() + " ("
+                + snapshot.getHeadDirection() + ") | Política: " + snapshot.getPolicy());
+
         if (snapshot.getSessionSummary() != null) {
-             mainFrame.getLblStatusCenter().setText("Sesión: " + snapshot.getSessionSummary().getCurrentUserId() + " / " + snapshot.getSessionSummary().getCurrentRole());
+            mainFrame.getLblStatusCenter().setText("Sesión: " + snapshot.getSessionSummary().getCurrentUserId() + " / "
+                    + snapshot.getSessionSummary().getCurrentRole());
         }
 
-        mainFrame.getLblStatusRight().setText("Seek total: " + snapshot.getTotalSeekDistance());
+        String statusRight = "Seek total: " + snapshot.getTotalSeekDistance();
+        if (recoveryRequired) {
+            statusRight = statusRight + " | Modo: Recovery pendiente";
+        }
+        mainFrame.getLblStatusRight().setText(statusRight);
     }
 
     private void showError(String msg) {
