@@ -144,9 +144,24 @@ public class FileSystemTreePanel extends JPanel {
     }
 
     private static class DarkTreeCellRenderer extends DefaultTreeCellRenderer {
+
+        private final Icon folderIcon = UIManager.getIcon("FileView.directoryIcon");
+        private final Icon fileIcon = UIManager.getIcon("FileView.fileIcon");
+
         @Override
         public Component getTreeCellRendererComponent(JTree tree, Object value, boolean sel, boolean expanded, boolean leaf, int row, boolean hasFocus) {
             super.getTreeCellRendererComponent(tree, value, sel, expanded, leaf, row, hasFocus);
+
+            if (value instanceof DefaultMutableTreeNode treeNode) {
+                Object userObject = treeNode.getUserObject();
+                if (userObject instanceof FsNodeData data) {
+                    if (data.isDir) {
+                        setIcon(folderIcon != null ? folderIcon : getDefaultOpenIcon());
+                    } else {
+                        setIcon(fileIcon != null ? fileIcon : getDefaultLeafIcon());
+                    }
+                }
+            }
             
             setBackgroundNonSelectionColor(DarkTheme.BG_PANEL);
             setTextNonSelectionColor(DarkTheme.FG_PRIMARY);

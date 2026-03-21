@@ -78,6 +78,7 @@ public final class SimulationCoordinator {
     private int totalSeekDistance;
     private int activeDiskTasks;
     private int maxConcurrentDiskTasksObserved;
+    private volatile long executionDelayMillis;
 
     private volatile boolean shutdownRequested;
     private volatile boolean started;
@@ -143,6 +144,7 @@ public final class SimulationCoordinator {
         this.totalSeekDistance = 0;
         this.activeDiskTasks = 0;
         this.maxConcurrentDiskTasksObserved = 0;
+        this.executionDelayMillis = 0L;
         this.shutdownRequested = false;
         this.started = false;
         this.acceptingCommands = false;
@@ -230,6 +232,19 @@ public final class SimulationCoordinator {
         channels.enqueueCommand(new ChangeDirectionCoordinatorCommand(direction));
     }
 
+    public void changeExecutionDelay(long delayMillis) {
+        if (delayMillis < 0L) {
+            throw new IllegalArgumentException("delayMillis cannot be negative");
+        }
+        requireStartedAndAcceptingCommands();
+        ensureNotAwaitingRecovery();
+        channels.enqueueCommand(new ChangeExecutionDelayCoordinatorCommand(delayMillis));
+    }
+
+    public long getExecutionDelayMillis() {
+        return executionDelayMillis;
+    }
+
     public SimulationSnapshot getLatestSnapshot() {
         return latestSnapshot;
     }
@@ -296,7 +311,9 @@ public final class SimulationCoordinator {
                 break;
             }
 
-            if (!worked) {
+            if (worked && executionDelayMillis > 0L) {
+                sleepQuietly(executionDelayMillis);
+            } else if (!worked) {
                 sleepQuietly(2L);
             }
         }
@@ -1538,6 +1555,25 @@ public final class SimulationCoordinator {
                 return;
             }
             disk.setHeadDirection(direction);
+        }
+    }
+
+    private final class ChangeExecutionDelayCoordinatorCommand implements CoordinatorCommand {
+
+        private final long delayMillis;
+
+        private ChangeExecutionDelayCoordinatorCommand(long delayMillis) {
+            this.delayMillis = delayMillis;
+        }
+
+        @Override
+        public void execute() {
+            if (recoveryQuarantineActive) {
+                recordEvent("CRASH", "ignored execution delay change during recovery quarantine");
+                return;
+            }
+            executionDelayMillis = delayMillis;
+            recordEvent("PLAYBACK", "execution delay set to " + delayMillis + " ms");
         }
     }
 

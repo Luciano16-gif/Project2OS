@@ -3,6 +3,9 @@ package ve.edu.unimet.so.project2.project2os.gui;
 import javax.swing.*;
 import javax.swing.border.TitledBorder;
 import java.awt.*;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.Random;
 
 public class DarkTheme {
     public static final Color BG_DARK = new Color(30, 34, 43);
@@ -15,31 +18,54 @@ public class DarkTheme {
     public static final Color ACCENT_RED = new Color(230, 74, 25);
     public static final Color ACCENT_YELLOW = new Color(245, 166, 35);
     
-    private static final Color[] PALETTE = {
-        new Color(214, 39, 40),    // Red
-        new Color(44, 160, 44),    // Green
-        new Color(31, 119, 180),   // Blue
-        new Color(255, 127, 14),   // Orange
-        new Color(148, 103, 189),  // Purple
-        new Color(140, 86, 75),    // Brown
-        new Color(227, 119, 194),  // Pink
-        new Color(188, 189, 34),   // Olive
-        new Color(23, 190, 207),   // Cyan
-        new Color(255, 187, 120),  // Light Orange
-        new Color(152, 223, 138),  // Light Green
-        new Color(174, 199, 232),  // Light Blue
-        new Color(255, 152, 150),  // Light Red
-        new Color(197, 176, 213),  // Light Purple
-        new Color(196, 156, 148),  // Light Brown
-        new Color(247, 182, 210),  // Light Pink
-        new Color(219, 219, 141),  // Light Olive
-        new Color(158, 218, 229)   // Light Cyan
-    };
+    private static final Map<String, Color> dynamicColors = new ConcurrentHashMap<>();
+    private static final Random random = new Random();
 
     public static Color getColorForId(String colorId) {
         if (colorId == null) return FG_SECONDARY;
-        int hash = Math.abs(colorId.hashCode());
-        return PALETTE[hash % PALETTE.length];
+        return dynamicColors.computeIfAbsent(colorId, DarkTheme::generateDistinctColor);
+    }
+
+    private static Color generateDistinctColor(String id) {
+        Color bestColor = null;
+        double maxDist = -1;
+        
+        for (int i = 0; i < 100; i++) {
+            float hue = random.nextFloat();
+            float sat = 0.5f + random.nextFloat() * 0.5f; 
+            float bri = 0.6f + random.nextFloat() * 0.4f; 
+            Color candidate = Color.getHSBColor(hue, sat, bri);
+            
+            if (dynamicColors.isEmpty()) {
+                return candidate;
+            }
+
+            double minDist = Double.MAX_VALUE;
+            for (Color existing : dynamicColors.values()) {
+                double dist = colorDistance(candidate, existing);
+                if (dist < minDist) {
+                    minDist = dist;
+                }
+            }
+
+            if (minDist > 150) { 
+                return candidate;
+            }
+
+            if (minDist > maxDist) {
+                maxDist = minDist;
+                bestColor = candidate;
+            }
+        }
+        return bestColor != null ? bestColor : Color.getHSBColor(random.nextFloat(), 0.8f, 0.8f);
+    }
+
+    private static double colorDistance(Color c1, Color c2) {
+        long rmean = ((long) c1.getRed() + (long) c2.getRed()) / 2;
+        long r = (long) c1.getRed() - (long) c2.getRed();
+        long g = (long) c1.getGreen() - (long) c2.getGreen();
+        long b = (long) c1.getBlue() - (long) c2.getBlue();
+        return Math.sqrt((((512 + rmean) * r * r) >> 8) + 4 * g * g + (((767 - rmean) * b * b) >> 8));
     }
 
     public static void applyGlobalTheme() {

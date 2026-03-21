@@ -76,14 +76,20 @@ public class MainFrame extends JFrame {
         btnPlay.setForeground(DarkTheme.ACCENT_GREEN);
         btnPause = DarkTheme.styledButton("⏸");
         btnPause.setForeground(DarkTheme.ACCENT_RED);
-        comboPlaybackSpeed = new JComboBox<>(new String[]{"75 ms", "150 ms", "250 ms", "500 ms", "1000 ms"});
-        comboPlaybackSpeed.setSelectedItem("150 ms");
+        comboPlaybackSpeed = new JComboBox<>(new String[]{
+            "Instantáneo (2ms)", 
+            "Rápido (100ms)", 
+            "Medio (500ms)", 
+            "Lento (1 Seg)", 
+            "Paso a Paso (3 Seg)"
+        });
+        comboPlaybackSpeed.setSelectedItem("Instantáneo (2ms)");
         topToolbar.add(btnPlay);
         topToolbar.add(btnPause);
         topToolbar.add(new JLabel("Velocidad:"));
         topToolbar.add(comboPlaybackSpeed);
 
-        lblCycle = new JLabel("Reproduciendo (150 ms)");
+        lblCycle = new JLabel("Reproduciendo (Instantáneo)");
         lblCycle.setForeground(DarkTheme.FG_PRIMARY);
         topToolbar.add(Box.createHorizontalStrut(50));
         topToolbar.add(lblCycle);

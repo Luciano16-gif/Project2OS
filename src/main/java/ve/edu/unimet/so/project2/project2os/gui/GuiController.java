@@ -28,13 +28,19 @@ public class GuiController {
     }
 
     private void setupListeners() {
-        mainFrame.getBtnAdmin().addActionListener(e -> coordinator.switchSession("admin"));
-        mainFrame.getBtnUser().addActionListener(e -> coordinator.switchSession("user-1"));
+        mainFrame.getBtnAdmin().addActionListener(e -> runCoordinatorAction("Error cambiando a sesión Admin", () -> {
+            coordinator.switchSession("admin");
+            refreshFromSnapshot();
+        }));
+        mainFrame.getBtnUser().addActionListener(e -> runCoordinatorAction("Error cambiando a sesión Usuario", () -> {
+            coordinator.switchSession("user-1");
+            refreshFromSnapshot();
+        }));
         
         mainFrame.getBtnPolicyChange().addActionListener(e -> {
             String policyStr = (String) mainFrame.getComboPolicy().getSelectedItem();
             if (policyStr != null) {
-                coordinator.changePolicy(DiskSchedulingPolicy.valueOf(policyStr));
+                runCoordinatorAction("Error cambiando política", () -> coordinator.changePolicy(DiskSchedulingPolicy.valueOf(policyStr)));
             }
         });
 
@@ -60,10 +66,11 @@ public class GuiController {
 
         mainFrame.getComboPlaybackSpeed().addActionListener(e -> {
             String selected = (String) mainFrame.getComboPlaybackSpeed().getSelectedItem();
-            int delay = parseDelayMillis(selected, refreshTimer.getDelay());
-            refreshTimer.setDelay(delay);
-            refreshTimer.setInitialDelay(delay);
-            updatePlaybackLabel();
+            int delay = parseDelayMillis(selected, 2);
+            runCoordinatorAction("Error actualizando velocidad de ejecución", () -> coordinator.changeExecutionDelay(delay));
+            refreshTimer.setDelay(150);
+            refreshTimer.setInitialDelay(150);
+            updatePlaybackLabel(delay);
         });
 
         mainFrame.getBtnCreateFile().addActionListener(e -> {
@@ -145,15 +152,19 @@ public class GuiController {
         });
 
         mainFrame.getBtnSimularFallo().addActionListener(e -> {
-            coordinator.armSimulatedFailure();
-            mainFrame.getLblSystemState().setText("Estado del Sistema: FALLO ARMADO");
-            mainFrame.getLblSystemState().setForeground(DarkTheme.ACCENT_RED);
+            runCoordinatorAction("Error armando fallo simulado", () -> {
+                coordinator.armSimulatedFailure();
+                mainFrame.getLblSystemState().setText("Estado del Sistema: FALLO ARMADO");
+                mainFrame.getLblSystemState().setForeground(DarkTheme.ACCENT_RED);
+            });
         });
 
         mainFrame.getBtnRecovery().addActionListener(e -> {
-            coordinator.recoverPendingJournalEntries();
-            mainFrame.getLblSystemState().setText("Estado del Sistema: Normal");
-            mainFrame.getLblSystemState().setForeground(DarkTheme.FG_PRIMARY);
+            runCoordinatorAction("Error ejecutando recovery", () -> {
+                coordinator.recoverPendingJournalEntries();
+                mainFrame.getLblSystemState().setText("Estado del Sistema: Normal");
+                mainFrame.getLblSystemState().setForeground(DarkTheme.FG_PRIMARY);
+            });
         });
     }
 
@@ -265,7 +276,7 @@ public class GuiController {
     }
 
     private JFileChooser buildJsonFileChooser(String title) {
-        JFileChooser chooser = new JFileChooser();
+        JFileChooser chooser = new JFileChooser(System.getProperty("user.dir"));
         chooser.setDialogTitle(title);
         chooser.setFileFilter(new FileNameExtensionFilter("Archivos JSON (*.json)", "json"));
         chooser.setAcceptAllFileFilterUsed(true);
@@ -276,26 +287,62 @@ public class GuiController {
         if (label == null || label.isBlank()) {
             return fallback;
         }
-        String digitsOnly = label.replaceAll("[^0-9]", "");
-        if (digitsOnly.isBlank()) {
-            return fallback;
+        String normalized = label.trim().toLowerCase();
+        if (normalized.contains("instant")) {
+            return 2;
+        } else if (normalized.contains("rápido") || normalized.contains("rapido")) {
+            return 100;
+        } else if (normalized.contains("medio")) {
+            return 500;
+        } else if (normalized.contains("lento")) {
+            return 1000;
+        } else if (normalized.contains("paso")) {
+            return 3000;
         }
-        try {
-            int parsed = Integer.parseInt(digitsOnly);
-            return parsed > 0 ? parsed : fallback;
-        } catch (NumberFormatException ignored) {
-            return fallback;
-        }
+        return fallback;
     }
 
     private void updatePlaybackLabel() {
+        updatePlaybackLabel((int) coordinator.getExecutionDelayMillis());
+    }
+
+    private void updatePlaybackLabel(int executionDelay) {
         String mode = refreshTimer.isRunning() ? "Reproduciendo" : "Pausado";
-        mainFrame.getLblCycle().setText(mode + " (" + refreshTimer.getDelay() + " ms)");
+        String speedText = executionDelay <= 2 ? "Instantáneo" : executionDelay + " ms";
+        if (executionDelay >= 1000) {
+            speedText = (executionDelay / 1000) + " Seg";
+        }
+        mainFrame.getLblCycle().setText(mode + " (" + speedText + ")");
+    }
+
+    private void runCoordinatorAction(String errorPrefix, Runnable action) {
+        try {
+            action.run();
+        } catch (Exception ex) {
+            showError(errorPrefix + ": " + ex.getMessage());
+        }
+    }
+
+    private void updateCrudButtonsByRole(SimulationSnapshot snapshot) {
+        boolean adminSession = false;
+        if (snapshot != null && snapshot.getSessionSummary() != null && snapshot.getSessionSummary().getCurrentRole() != null) {
+            adminSession = "ADMIN".equalsIgnoreCase(snapshot.getSessionSummary().getCurrentRole().name());
+        }
+
+        mainFrame.getBtnCreateFile().setEnabled(adminSession);
+        mainFrame.getBtnCreateDir().setEnabled(adminSession);
+        mainFrame.getBtnRename().setEnabled(adminSession);
+        mainFrame.getBtnDelete().setEnabled(adminSession);
+        // Lectura y estadísticas siguen habilitadas para usuarios regulares.
+        mainFrame.getBtnRead().setEnabled(true);
+        mainFrame.getBtnStats().setEnabled(true);
     }
 
     private void refreshFromSnapshot() {
         SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
         if (snapshot == null) return;
+
+        updateCrudButtonsByRole(snapshot);
 
         mainFrame.getFileSystemTreePanel().updateFromSnapshot(snapshot.getFileSystemNodesSnapshot());
         mainFrame.getDiskVisualizationPanel().updateFromSnapshot(snapshot.getDiskBlocksSnapshot(), snapshot.getFileSystemNodesSnapshot());
