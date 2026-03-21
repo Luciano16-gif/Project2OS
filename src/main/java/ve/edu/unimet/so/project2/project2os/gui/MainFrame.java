@@ -9,7 +9,7 @@ public class MainFrame extends JFrame {
     private JComboBox<String> comboPolicy;
     private JButton btnPolicyChange;
     private JButton btnSaveSystem, btnLoadSystem, btnLoadScenario;
-    private JButton btnPlay, btnPause;
+    private JButton btnPlay, btnPause, btnStep;
     private JComboBox<String> comboPlaybackSpeed;
     private JLabel lblCycle;
 
@@ -76,16 +76,17 @@ public class MainFrame extends JFrame {
         btnPlay.setForeground(DarkTheme.ACCENT_GREEN);
         btnPause = DarkTheme.styledButton("⏸");
         btnPause.setForeground(DarkTheme.ACCENT_RED);
+        btnStep = DarkTheme.styledButton("Step by Step");
         comboPlaybackSpeed = new JComboBox<>(new String[]{
-            "Instantáneo (2ms)", 
+            "Instantáneo",
             "Rápido (100ms)", 
             "Medio (500ms)", 
-            "Lento (1 Seg)", 
-            "Paso a Paso (3 Seg)"
+            "Lento (1 Seg)"
         });
-        comboPlaybackSpeed.setSelectedItem("Instantáneo (2ms)");
+        comboPlaybackSpeed.setSelectedItem("Instantáneo");
         topToolbar.add(btnPlay);
         topToolbar.add(btnPause);
+        topToolbar.add(btnStep);
         topToolbar.add(new JLabel("Velocidad:"));
         topToolbar.add(comboPlaybackSpeed);
 
@@ -202,6 +203,7 @@ public class MainFrame extends JFrame {
     public JButton getBtnLoadScenario() { return btnLoadScenario; }
     public JButton getBtnPlay() { return btnPlay; }
     public JButton getBtnPause() { return btnPause; }
+    public JButton getBtnStep() { return btnStep; }
     public JComboBox<String> getComboPlaybackSpeed() { return comboPlaybackSpeed; }
     public JLabel getLblCycle() { return lblCycle; }
     public JButton getBtnCreateFile() { return btnCreateFile; }

@@ -51,6 +51,7 @@ public class GuiController {
         mainFrame.getBtnStats().addActionListener(e -> showStatisticsDialog());
 
         mainFrame.getBtnPlay().addActionListener(e -> {
+            runCoordinatorAction("Error reanudando simulación", () -> coordinator.setStepModeEnabled(false));
             if (!refreshTimer.isRunning()) {
                 refreshTimer.start();
             }
@@ -58,8 +59,17 @@ public class GuiController {
         });
 
         mainFrame.getBtnPause().addActionListener(e -> {
-            if (refreshTimer.isRunning()) {
-                refreshTimer.stop();
+            runCoordinatorAction("Error pausando simulación", () -> coordinator.setStepModeEnabled(true));
+            if (!refreshTimer.isRunning()) {
+                refreshTimer.start();
+            }
+            updatePlaybackLabel();
+        });
+
+        mainFrame.getBtnStep().addActionListener(e -> {
+            runCoordinatorAction("Error avanzando simulación por paso", () -> coordinator.stepSimulationOnce());
+            if (!refreshTimer.isRunning()) {
+                refreshTimer.start();
             }
             updatePlaybackLabel();
         });
@@ -197,6 +207,12 @@ public class GuiController {
     }
 
     private void handleLoadScenario() {
+        SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
+        if (!isCoordinatorIdle(snapshot)) {
+            showError(buildBusyScenarioMessage(snapshot));
+            return;
+        }
+
         Path selected = chooseFileToOpen("Cargar escenario JSON");
         if (selected == null) {
             return;
@@ -208,6 +224,36 @@ public class GuiController {
         } catch (Exception ex) {
             showError("Error cargando escenario: " + ex.getMessage());
         }
+    }
+
+    private boolean isCoordinatorIdle(SimulationSnapshot snapshot) {
+        if (snapshot == null) {
+            return true;
+        }
+        boolean hasRunning = snapshot.getRunningProcessSnapshot() != null;
+        boolean hasNew = snapshot.getNewProcessesSnapshot().length > 0;
+        boolean hasReady = snapshot.getReadyProcessesSnapshot().length > 0;
+        boolean hasBlocked = snapshot.getBlockedProcessesSnapshot().length > 0;
+        return !(hasRunning || hasNew || hasReady || hasBlocked);
+    }
+
+    private String buildBusyScenarioMessage(SimulationSnapshot snapshot) {
+        if (snapshot == null) {
+            return "No se puede cargar el escenario en este momento. Intente nuevamente en unos segundos.";
+        }
+
+        int newCount = snapshot.getNewProcessesSnapshot().length;
+        int readyCount = snapshot.getReadyProcessesSnapshot().length;
+        int blockedCount = snapshot.getBlockedProcessesSnapshot().length;
+        int runningCount = snapshot.getRunningProcessSnapshot() != null ? 1 : 0;
+
+        return "No se puede cargar el escenario porque la simulación aún no está idle.\n"
+                + "Procesos activos: " + (newCount + readyCount + blockedCount + runningCount) + "\n"
+                + "(Nuevo=" + newCount
+                + ", Listo=" + readyCount
+                + ", Bloqueado=" + blockedCount
+                + ", Ejecutando=" + runningCount + ")\n\n"
+                + "Presione Play para que termine la cola actual y vuelva a intentar.";
     }
 
     private void showStatisticsDialog() {
@@ -289,15 +335,13 @@ public class GuiController {
         }
         String normalized = label.trim().toLowerCase();
         if (normalized.contains("instant")) {
-            return 2;
+            return 0;
         } else if (normalized.contains("rápido") || normalized.contains("rapido")) {
             return 100;
         } else if (normalized.contains("medio")) {
             return 500;
         } else if (normalized.contains("lento")) {
             return 1000;
-        } else if (normalized.contains("paso")) {
-            return 3000;
         }
         return fallback;
     }
@@ -307,8 +351,8 @@ public class GuiController {
     }
 
     private void updatePlaybackLabel(int executionDelay) {
-        String mode = refreshTimer.isRunning() ? "Reproduciendo" : "Pausado";
-        String speedText = executionDelay <= 2 ? "Instantáneo" : executionDelay + " ms";
+        String mode = coordinator.isStepModeEnabled() ? "Pausado / Manual" : "Reproduciendo";
+        String speedText = executionDelay <= 0 ? "Instantáneo" : executionDelay + " ms";
         if (executionDelay >= 1000) {
             speedText = (executionDelay / 1000) + " Seg";
         }

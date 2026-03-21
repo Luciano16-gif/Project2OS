@@ -79,6 +79,8 @@ public final class SimulationCoordinator {
     private int activeDiskTasks;
     private int maxConcurrentDiskTasksObserved;
     private volatile long executionDelayMillis;
+    private volatile boolean stepModeEnabled;
+    private int pendingStepPermits;
 
     private volatile boolean shutdownRequested;
     private volatile boolean started;
@@ -145,6 +147,8 @@ public final class SimulationCoordinator {
         this.activeDiskTasks = 0;
         this.maxConcurrentDiskTasksObserved = 0;
         this.executionDelayMillis = 0L;
+        this.stepModeEnabled = false;
+        this.pendingStepPermits = 0;
         this.shutdownRequested = false;
         this.started = false;
         this.acceptingCommands = false;
@@ -245,6 +249,22 @@ public final class SimulationCoordinator {
         return executionDelayMillis;
     }
 
+    public void setStepModeEnabled(boolean enabled) {
+        requireStartedAndAcceptingCommands();
+        ensureNotAwaitingRecovery();
+        channels.enqueueCommand(new SetStepModeCoordinatorCommand(enabled));
+    }
+
+    public boolean isStepModeEnabled() {
+        return stepModeEnabled;
+    }
+
+    public void stepSimulationOnce() {
+        requireStartedAndAcceptingCommands();
+        ensureNotAwaitingRecovery();
+        channels.enqueueCommand(new StepSimulationCoordinatorCommand());
+    }
+
     public SimulationSnapshot getLatestSnapshot() {
         return latestSnapshot;
     }
@@ -278,28 +298,32 @@ public final class SimulationCoordinator {
         while (true) {
             boolean worked = false;
 
-            DiskServiceResult diskResult = channels.pollCompletedDiskResult();
-            if (diskResult != null) {
-                finishRunningProcess(diskResult);
-                worked = true;
-            }
-
             CoordinatorCommand command = channels.pollCommand();
             if (command != null) {
                 executeCommandSafely(command);
                 worked = true;
             }
 
-            if (reconcileBlockedLockWaiters()) {
-                worked = true;
-            }
+            boolean canAdvanceSimulation = consumeStepPermitIfNeeded();
 
-            if (materializePendingSubmissions()) {
-                worked = true;
-            }
+            if (canAdvanceSimulation) {
+                DiskServiceResult diskResult = channels.pollCompletedDiskResult();
+                if (diskResult != null) {
+                    finishRunningProcess(diskResult);
+                    worked = true;
+                }
 
-            if (processStore.getRunningProcess() == null && tryDispatchNextReady()) {
-                worked = true;
+                if (reconcileBlockedLockWaiters()) {
+                    worked = true;
+                }
+
+                if (materializePendingSubmissions()) {
+                    worked = true;
+                }
+
+                if (processStore.getRunningProcess() == null && tryDispatchNextReady()) {
+                    worked = true;
+                }
             }
 
             publishSnapshot();
@@ -319,6 +343,17 @@ public final class SimulationCoordinator {
         }
 
         publishSnapshot();
+    }
+
+    private boolean consumeStepPermitIfNeeded() {
+        if (!stepModeEnabled) {
+            return true;
+        }
+        if (pendingStepPermits <= 0) {
+            return false;
+        }
+        pendingStepPermits--;
+        return true;
     }
 
     private void runDiskLoop() {
@@ -1574,6 +1609,42 @@ public final class SimulationCoordinator {
             }
             executionDelayMillis = delayMillis;
             recordEvent("PLAYBACK", "execution delay set to " + delayMillis + " ms");
+        }
+    }
+
+    private final class SetStepModeCoordinatorCommand implements CoordinatorCommand {
+
+        private final boolean enabled;
+
+        private SetStepModeCoordinatorCommand(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        @Override
+        public void execute() {
+            if (recoveryQuarantineActive) {
+                recordEvent("CRASH", "ignored step mode change during recovery quarantine");
+                return;
+            }
+            stepModeEnabled = enabled;
+            if (!enabled) {
+                pendingStepPermits = 0;
+            }
+            recordEvent("PLAYBACK", enabled ? "step mode enabled" : "step mode disabled");
+        }
+    }
+
+    private final class StepSimulationCoordinatorCommand implements CoordinatorCommand {
+
+        @Override
+        public void execute() {
+            if (recoveryQuarantineActive) {
+                recordEvent("CRASH", "ignored step command during recovery quarantine");
+                return;
+            }
+            stepModeEnabled = true;
+            pendingStepPermits++;
+            recordEvent("PLAYBACK", "queued manual simulation step");
         }
     }
 
