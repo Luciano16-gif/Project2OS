@@ -96,9 +96,6 @@ public class MainFrame extends JFrame {
         topToolbar.add(Box.createHorizontalStrut(50));
         topToolbar.add(lblCycle);
 
-        btnAdvanced = DarkTheme.styledButton("Avanzado");
-        topToolbar.add(btnAdvanced);
-
         add(topToolbar, BorderLayout.NORTH);
 
         // ----------------- CENTER LAYOUT -----------------
@@ -132,11 +129,13 @@ public class MainFrame extends JFrame {
         policyOverlay.setOpaque(false);
         comboPolicy = new JComboBox<>(new String[]{"FIFO", "SSTF", "SCAN", "C_SCAN"});
         btnPolicyChange = DarkTheme.styledButton("Aplicar Política");
+        btnAdvanced = DarkTheme.styledButton("Avanzado");
         JLabel lblPlan = new JLabel("Planificador:");
         lblPlan.setForeground(DarkTheme.FG_PRIMARY);
         policyOverlay.add(lblPlan);
         policyOverlay.add(comboPolicy);
         policyOverlay.add(btnPolicyChange);
+        policyOverlay.add(btnAdvanced);
         diskContainer.add(policyOverlay, BorderLayout.NORTH);
         diskContainer.add(diskVisualizationPanel, BorderLayout.CENTER);
 

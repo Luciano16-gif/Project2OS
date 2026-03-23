@@ -96,6 +96,10 @@ public class GuiController {
                 showError("Seleccione un directorio destino en el árbol.");
                 return;
             }
+            if (!isDirectoryPath(parent)) {
+                showError("La ruta seleccionada no es un directorio. Seleccione una carpeta para crear el archivo.");
+                return;
+            }
             String name = JOptionPane.showInputDialog(mainFrame, "Nombre del archivo:");
             if (name == null || name.isBlank())
                 return;
@@ -104,10 +108,18 @@ public class GuiController {
                 return;
 
             try {
-                int size = Integer.parseInt(sizeStr);
+                int size = parseRequiredPositiveInt(sizeStr, "La cantidad de bloques debe ser un número entero mayor que 0.");
+                int freeBlocks = countFreeBlocks();
+                if (size > freeBlocks) {
+                    showError("No hay bloques suficientes para crear el archivo.\n"
+                            + "Solicitados: " + size + " | Disponibles: " + freeBlocks);
+                    return;
+                }
                 coordinator.submitIntent(new CreateFileIntent(parent, name, size, false, false));
+            } catch (IllegalArgumentException ex) {
+                showError(ex.getMessage());
             } catch (Exception ex) {
-                showError("Error: " + ex.getMessage());
+                showOperationError("crear archivo", ex);
             }
         });
 
@@ -117,13 +129,17 @@ public class GuiController {
                 showError("Seleccione un directorio destino en el árbol.");
                 return;
             }
+            if (!isDirectoryPath(parent)) {
+                showError("La ruta seleccionada no es un directorio. Seleccione una carpeta para crear el directorio.");
+                return;
+            }
             String name = JOptionPane.showInputDialog(mainFrame, "Nombre del directorio:");
             if (name == null || name.isBlank())
                 return;
             try {
                 coordinator.submitIntent(new CreateDirectoryIntent(parent, name, false));
             } catch (Exception ex) {
-                showError("Error: " + ex.getMessage());
+                showOperationError("crear directorio", ex);
             }
         });
 
@@ -136,7 +152,7 @@ public class GuiController {
             try {
                 coordinator.submitIntent(new ReadIntent(target));
             } catch (Exception ex) {
-                showError("Error: " + ex.getMessage());
+                showOperationError("leer", ex);
             }
         });
 
@@ -152,7 +168,7 @@ public class GuiController {
             try {
                 coordinator.submitIntent(new RenameIntent(target, name));
             } catch (Exception ex) {
-                showError("Error: " + ex.getMessage());
+                showOperationError("renombrar", ex);
             }
         });
 
@@ -168,7 +184,7 @@ public class GuiController {
                 try {
                     coordinator.submitIntent(new DeleteIntent(target));
                 } catch (Exception ex) {
-                    showError("Error: " + ex.getMessage());
+                    showOperationError("eliminar", ex);
                 }
             }
         });
@@ -561,5 +577,66 @@ public class GuiController {
 
     private void showError(String msg) {
         JOptionPane.showMessageDialog(mainFrame, msg, "Error", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private int parseRequiredPositiveInt(String rawValue, String validationMessage) {
+        try {
+            int value = Integer.parseInt(rawValue.trim());
+            if (value <= 0) {
+                throw new IllegalArgumentException(validationMessage);
+            }
+            return value;
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException(validationMessage);
+        }
+    }
+
+    private int countFreeBlocks() {
+        SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
+        if (snapshot == null || snapshot.getDiskBlocksSnapshot() == null) {
+            return 0;
+        }
+        int free = 0;
+        for (SimulationSnapshot.DiskBlockSummary block : snapshot.getDiskBlocksSnapshot()) {
+            if (block.isFree()) {
+                free++;
+            }
+        }
+        return free;
+    }
+
+    private boolean isDirectoryPath(String path) {
+        SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
+        if (snapshot == null || path == null) {
+            return false;
+        }
+        for (SimulationSnapshot.FileSystemNodeSummary node : snapshot.getFileSystemNodesSnapshot()) {
+            if (path.equals(node.getPath())) {
+                return node.getType() == ve.edu.unimet.so.project2.filesystem.FsNodeType.DIRECTORY;
+            }
+        }
+        return false;
+    }
+
+    private void showOperationError(String operation, Exception ex) {
+        String message = ex.getMessage();
+        if (message == null || message.isBlank()) {
+            message = ex.getClass().getSimpleName();
+        }
+
+        if (message.contains("cannot modify")) {
+            showError("No tienes permisos para " + operation + " este recurso porque no es tuyo.");
+            return;
+        }
+        if (message.contains("not enough free disk blocks")) {
+            showError("No hay bloques suficientes disponibles para completar la operación.");
+            return;
+        }
+        if (message.contains("path does not reference a directory")) {
+            showError("La ruta seleccionada no es un directorio válido para esta operación.");
+            return;
+        }
+
+        showError("Error al " + operation + ": " + message);
     }
 }
