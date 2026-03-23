@@ -8,6 +8,8 @@ import ve.edu.unimet.so.project2.scheduler.DiskSchedulingPolicy;
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
 
 public class GuiController {
 
@@ -15,6 +17,7 @@ public class GuiController {
     private final MainFrame mainFrame;
     private final Timer refreshTimer;
     private boolean recoveryPopupShown;
+    private final Set<String> notifiedIntentFailures;
 
     private static final String ARMED_TOOLTIP = "El próximo commit journaled disparará un fallo simulado";
 
@@ -22,6 +25,7 @@ public class GuiController {
         this.coordinator = coordinator;
         this.mainFrame = mainFrame;
         this.recoveryPopupShown = false;
+        this.notifiedIntentFailures = new HashSet<>();
 
         // Refresh at 150ms intervals
         this.refreshTimer = new Timer(150, e -> refreshFromSnapshot());
@@ -543,6 +547,8 @@ public class GuiController {
         if (snapshot == null)
             return;
 
+        showAsyncIntentFailurePopups(snapshot);
+
         boolean recoveryRequired = coordinator.isRecoveryQuarantineActive();
         boolean failureArmed = coordinator.isSimulatedFailureArmed() && !recoveryRequired;
 
@@ -573,6 +579,52 @@ public class GuiController {
             statusRight = statusRight + " | Modo: Recovery pendiente";
         }
         mainFrame.getLblStatusRight().setText(statusRight);
+    }
+
+    private void showAsyncIntentFailurePopups(SimulationSnapshot snapshot) {
+        SimulationSnapshot.ProcessSnapshot[] terminated = snapshot.getTerminatedProcessesSnapshot();
+        Set<String> currentTerminatedIds = new HashSet<>();
+
+        for (SimulationSnapshot.ProcessSnapshot process : terminated) {
+            currentTerminatedIds.add(process.getProcessId());
+        }
+
+        for (SimulationSnapshot.ProcessSnapshot process : terminated) {
+            if (!isManualIntentProcess(process)) {
+                continue;
+            }
+            if (process.getResultStatus() == ve.edu.unimet.so.project2.process.ResultStatus.SUCCESS) {
+                continue;
+            }
+            if (notifiedIntentFailures.contains(process.getProcessId())) {
+                continue;
+            }
+
+            String operation = resolveOperationLabel(process.getOperationType());
+            String friendlyMessage = toFriendlyErrorMessage(operation, process.getErrorMessage());
+            showError(friendlyMessage);
+            notifiedIntentFailures.add(process.getProcessId());
+            break;
+        }
+
+        notifiedIntentFailures.retainAll(currentTerminatedIds);
+    }
+
+    private boolean isManualIntentProcess(SimulationSnapshot.ProcessSnapshot process) {
+        String processId = process.getProcessId();
+        return processId != null && processId.startsWith("INTENT-PROC-");
+    }
+
+    private String resolveOperationLabel(ve.edu.unimet.so.project2.process.IoOperationType operationType) {
+        if (operationType == null) {
+            return "procesar";
+        }
+        return switch (operationType) {
+            case CREATE -> "crear";
+            case READ -> "leer";
+            case UPDATE -> "renombrar";
+            case DELETE -> "eliminar";
+        };
     }
 
     private void showError(String msg) {
@@ -624,19 +676,43 @@ public class GuiController {
             message = ex.getClass().getSimpleName();
         }
 
-        if (message.contains("cannot modify")) {
-            showError("No tienes permisos para " + operation + " este recurso porque no es tuyo.");
-            return;
+        showError(toFriendlyErrorMessage(operation, message));
+    }
+
+    private String toFriendlyErrorMessage(String operation, String rawMessage) {
+        String message = rawMessage == null || rawMessage.isBlank() ? "Error desconocido" : rawMessage;
+        String lower = message.toLowerCase();
+
+        if (lower.contains("cannot modify")) {
+            return "No tienes permisos para " + operation + " este recurso porque no es tuyo.";
         }
-        if (message.contains("not enough free disk blocks")) {
-            showError("No hay bloques suficientes disponibles para completar la operación.");
-            return;
+        if (lower.contains("not enough free disk blocks")) {
+            return "No hay bloques suficientes disponibles para completar la operación.";
         }
-        if (message.contains("path does not reference a directory")) {
-            showError("La ruta seleccionada no es un directorio válido para esta operación.");
-            return;
+        if (lower.contains("path does not reference a directory")) {
+            return "La ruta seleccionada no es un directorio válido para esta operación.";
+        }
+        if (lower.contains("path does not reference a file")) {
+            return "La ruta seleccionada no es un archivo. Debes seleccionar un archivo para leer.";
+        }
+        if (lower.contains("name cannot contain /")
+                || lower.contains("name cannot be . or ..")
+                || lower.contains("name cannot be blank")) {
+            return "El nombre ingresado no es válido. No puede ser vacío, '.' , '..' ni contener '/'.";
+        }
+        if (lower.contains("duplicate child name under parent") || lower.contains("already exists at path")) {
+            return "Ya existe un archivo o directorio con ese nombre en la carpeta destino.";
+        }
+        if (lower.contains("root cannot be renamed")) {
+            return "No se puede renombrar la raíz del sistema de archivos.";
+        }
+        if (lower.contains("root cannot be deleted")) {
+            return "No se puede eliminar la raíz del sistema de archivos.";
+        }
+        if (lower.contains("node not found at path")) {
+            return "La ruta seleccionada ya no existe. Actualiza la vista e inténtalo de nuevo.";
         }
 
-        showError("Error al " + operation + ": " + message);
+        return "Error al " + operation + ": " + message;
     }
 }

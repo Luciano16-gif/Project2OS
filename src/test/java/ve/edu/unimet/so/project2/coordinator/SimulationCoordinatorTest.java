@@ -1113,6 +1113,43 @@ class SimulationCoordinatorTest {
                 snapshot.getTerminatedProcessesSnapshot()[1].getResultStatus());
     }
 
+    @Test
+    void manualIntentCanRunWhileAnotherProcessIsBlocked() {
+        LockTable lockTable = new LockTable();
+        lockTable.tryAcquire("file-locked-intent", "external-reader", LockType.SHARED);
+        coordinator = createCoordinator(lockTable, new JournalManager());
+        coordinator.start();
+
+        coordinator.submitOperation(new PreparedOperationCommand(
+                "REQ-BLOCK-INTENT",
+                "PROC-BLOCK-INTENT",
+                "user-1",
+                ve.edu.unimet.so.project2.process.IoOperationType.UPDATE,
+                FsNodeType.FILE,
+                "/file-locked-intent",
+                "file-locked-intent",
+                10,
+                0,
+                LockType.EXCLUSIVE,
+                new PreparedJournalData(
+                        new UpdateRenameUndoData("file-locked-intent", "root", "/", "old.txt", "new.txt"),
+                        "file-locked-intent",
+                        "user-1",
+                        "blocked operation"),
+                (command, process, diskResult) -> OperationApplyResult.success()));
+
+        waitForSnapshot(s -> s.getBlockedProcessesSnapshot().length == 1);
+
+        coordinator.submitIntent(new CreateFileIntent("/home-user-1", "created-while-blocked.txt", 1, false, false));
+
+        SimulationSnapshot snapshot = waitForSnapshot(s ->
+                findFileSystemNodeByPath(s, "/home-user-1/created-while-blocked.txt") != null
+                        && s.getBlockedProcessesSnapshot().length == 1
+                        && s.getTerminatedProcessesSnapshot().length >= 1);
+
+        assertNotNull(findFileSystemNodeByPath(snapshot, "/home-user-1/created-while-blocked.txt"));
+    }
+
         @Test
         void userCanReadPrivateForeignFileButCannotDeleteIt() {
         coordinator = createCoordinator(new LockTable(), new JournalManager());

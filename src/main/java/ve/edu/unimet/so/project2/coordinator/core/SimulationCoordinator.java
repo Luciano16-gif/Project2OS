@@ -1204,14 +1204,14 @@ public final class SimulationCoordinator {
 
         while (!pendingSubmissions.isEmpty()) {
             PendingSubmission next = pendingSubmissions.peek();
-            if (next.intent != null && processStore.hasActiveProcesses()) {
-                break;
-            }
-
             pendingSubmissions.dequeue();
             if (next.intent != null) {
-                materializeIntentSubmission(next);
+                boolean completed = materializeIntentSubmission(next);
                 changed = true;
+                if (!completed) {
+                    // Deferred retry: avoid spinning through the queue in the same loop tick.
+                    break;
+                }
                 continue;
             }
 
@@ -1226,13 +1226,13 @@ public final class SimulationCoordinator {
         return changed;
     }
 
-    private void materializeIntentSubmission(PendingSubmission pendingIntent) {
+    private boolean materializeIntentSubmission(PendingSubmission pendingIntent) {
         try {
             if (pendingIntent.intent instanceof SwitchSessionIntent switchSessionIntent) {
                 applicationState.getSessionContext().switchTo(
                         applicationState.getUserStore().requireById(switchSessionIntent.getTargetUserId()));
                 recordEvent("SESSION", "switched session to " + switchSessionIntent.getTargetUserId());
-                return;
+                return true;
             }
 
             ApplicationOperationIntent intent = pendingIntent.intent;
@@ -1245,7 +1245,12 @@ public final class SimulationCoordinator {
                     pendingIntent.requestId,
                     pendingIntent.processId);
             handleSubmitOperation(command);
+            return true;
         } catch (RuntimeException exception) {
+            if (shouldRetryIntentPlanning(exception)) {
+                pendingSubmissions.enqueue(pendingIntent);
+                return false;
+            }
             processStore.addRejectedTerminatedProcess(
                     pendingIntent.processId,
                     pendingIntent.requestId,
@@ -1256,7 +1261,17 @@ public final class SimulationCoordinator {
                     0,
                     exception.getMessage());
             recordEvent("PROCESS", "rejected intent " + pendingIntent.processId + ": " + exception.getMessage());
+            return true;
         }
+    }
+
+    private boolean shouldRetryIntentPlanning(RuntimeException exception) {
+        if (exception == null || exception.getMessage() == null) {
+            return false;
+        }
+        String message = exception.getMessage().toLowerCase();
+        return processStore.hasActiveProcesses()
+                && message.contains("node not found at path");
     }
 
     private void executeCommandSafely(CoordinatorCommand command) {
