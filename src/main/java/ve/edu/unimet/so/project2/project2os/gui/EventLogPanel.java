@@ -8,6 +8,7 @@ import java.awt.*;
 public class EventLogPanel extends JPanel {
 
     private final JTextArea textArea;
+    private final JScrollPane scrollPane;
     private long lastSeenSequence = -1;
     private static final String CATEGORY_PLAYBACK = "PLAYBACK";
 
@@ -22,7 +23,7 @@ public class EventLogPanel extends JPanel {
         textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         textArea.setMargin(new Insets(5, 5, 5, 5));
 
-        JScrollPane scrollPane = new JScrollPane(textArea);
+        scrollPane = new JScrollPane(textArea);
         scrollPane.setBorder(BorderFactory.createEmptyBorder());
         
         add(scrollPane, BorderLayout.CENTER);
@@ -40,12 +41,16 @@ public class EventLogPanel extends JPanel {
         }
 
         // Backend reinitializations can reset sequence numbering; restart local tracking to avoid a dead panel.
-        if (entries[0].getSequenceNumber() <= lastSeenSequence) {
+        if (entries[entries.length - 1].getSequenceNumber() < lastSeenSequence) {
             textArea.setText("");
             lastSeenSequence = -1;
         }
 
+        JScrollBar vertical = scrollPane.getVerticalScrollBar();
+        boolean isAtBottom = (vertical.getValue() + vertical.getVisibleAmount() >= vertical.getMaximum() - 5);
+
         boolean added = false;
+        StringBuilder sb = new StringBuilder();
         for (EventLogEntrySummary entry : entries) {
             if (entry.getSequenceNumber() <= lastSeenSequence) {
                 continue;
@@ -54,12 +59,17 @@ public class EventLogPanel extends JPanel {
             if (CATEGORY_PLAYBACK.equalsIgnoreCase(entry.getCategory())) {
                 continue;
             }
-            textArea.append(entry.getCategory() + " (" + entry.getTick() + "): " + entry.getMessage() + "\n");
+            sb.append(entry.getCategory())
+              .append(" (").append(entry.getTick()).append("): ")
+              .append(entry.getMessage()).append("\n");
             added = true;
         }
         
         if (added) {
-            textArea.setCaretPosition(textArea.getDocument().getLength());
+            textArea.append(sb.toString());
+            if (isAtBottom) {
+                SwingUtilities.invokeLater(() -> vertical.setValue(vertical.getMaximum()));
+            }
         }
     }
     
