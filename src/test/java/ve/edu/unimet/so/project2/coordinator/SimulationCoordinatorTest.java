@@ -1114,13 +1114,50 @@ class SimulationCoordinatorTest {
     }
 
     @Test
-    void userCanReadPublicForeignFileButCannotDeleteIt() {
+    void manualIntentCanRunWhileAnotherProcessIsBlocked() {
+        LockTable lockTable = new LockTable();
+        lockTable.tryAcquire("file-locked-intent", "external-reader", LockType.SHARED);
+        coordinator = createCoordinator(lockTable, new JournalManager());
+        coordinator.start();
+
+        coordinator.submitOperation(new PreparedOperationCommand(
+                "REQ-BLOCK-INTENT",
+                "PROC-BLOCK-INTENT",
+                "user-1",
+                ve.edu.unimet.so.project2.process.IoOperationType.UPDATE,
+                FsNodeType.FILE,
+                "/file-locked-intent",
+                "file-locked-intent",
+                10,
+                0,
+                LockType.EXCLUSIVE,
+                new PreparedJournalData(
+                        new UpdateRenameUndoData("file-locked-intent", "root", "/", "old.txt", "new.txt"),
+                        "file-locked-intent",
+                        "user-1",
+                        "blocked operation"),
+                (command, process, diskResult) -> OperationApplyResult.success()));
+
+        waitForSnapshot(s -> s.getBlockedProcessesSnapshot().length == 1);
+
+        coordinator.submitIntent(new CreateFileIntent("/home-user-1", "created-while-blocked.txt", 1, false, false));
+
+        SimulationSnapshot snapshot = waitForSnapshot(s ->
+                findFileSystemNodeByPath(s, "/home-user-1/created-while-blocked.txt") != null
+                        && s.getBlockedProcessesSnapshot().length == 1
+                        && s.getTerminatedProcessesSnapshot().length >= 1);
+
+        assertNotNull(findFileSystemNodeByPath(snapshot, "/home-user-1/created-while-blocked.txt"));
+    }
+
+        @Test
+        void userCanReadPrivateForeignFileButCannotDeleteIt() {
         coordinator = createCoordinator(new LockTable(), new JournalManager());
         coordinator.start();
 
         coordinator.submitIntent(new SwitchSessionIntent("user-2"));
         waitForSnapshot(s -> "user-2".equals(s.getSessionSummary().getCurrentUserId()));
-        coordinator.submitIntent(new CreateFileIntent("/home-user-2", "shared.txt", 1, true, false));
+                coordinator.submitIntent(new CreateFileIntent("/home-user-2", "shared.txt", 1, false, false));
         waitForSnapshot(s -> s.getTerminatedProcessesSnapshot().length == 1);
 
         coordinator.submitIntent(new SwitchSessionIntent("user-1"));
@@ -1138,6 +1175,29 @@ class SimulationCoordinatorTest {
         assertEquals(ve.edu.unimet.so.project2.process.ResultStatus.FAILED, failedDelete.getResultStatus());
         assertTrue(failedDelete.getErrorMessage().contains("cannot modify"));
         assertNotNull(findFileSystemNodeByPath(afterDelete, "/home-user-2/shared.txt"));
+    }
+
+    @Test
+    void userCanCreateSystemFileDirectlyUnderRoot() {
+        coordinator = createCoordinator(new LockTable(), new JournalManager());
+        coordinator.start();
+
+        coordinator.submitIntent(new SwitchSessionIntent("user-1"));
+        waitForSnapshot(s -> "user-1".equals(s.getSessionSummary().getCurrentUserId()));
+
+        coordinator.submitIntent(new CreateFileIntent("/", "user-owned-system.bin", 1, false, true));
+
+        SimulationSnapshot snapshot = waitForSnapshot(s ->
+                s.getTerminatedProcessesSnapshot().length == 1
+                        && findFileSystemNodeByPath(s, "/user-owned-system.bin") != null);
+        SimulationSnapshot.ProcessSnapshot createResult = snapshot.getTerminatedProcessesSnapshot()[0];
+        SimulationSnapshot.FileSystemNodeSummary created =
+                findFileSystemNodeByPath(snapshot, "/user-owned-system.bin");
+
+        assertEquals(ve.edu.unimet.so.project2.process.ResultStatus.SUCCESS, createResult.getResultStatus());
+        assertNotNull(created);
+        assertEquals("user-1", created.getOwnerUserId());
+        assertTrue(created.isSystemFile());
     }
 
     @Test
@@ -1207,6 +1267,31 @@ class SimulationCoordinatorTest {
         assertEquals(ve.edu.unimet.so.project2.process.ResultStatus.SUCCESS,
                 snapshot.getTerminatedProcessesSnapshot()[1].getResultStatus());
     }
+
+        @Test
+        void secondConcurrentRenameToSameNameFailsAsNoOp() {
+                coordinator = createCoordinator(new LockTable(), new JournalManager());
+                coordinator.start();
+
+                coordinator.submitIntent(new SwitchSessionIntent("user-1"));
+                waitForSnapshot(s -> "user-1".equals(s.getSessionSummary().getCurrentUserId()));
+                coordinator.submitIntent(new CreateFileIntent("/home-user-1", "draft.txt", 1, false, false));
+                waitForSnapshot(s -> s.getTerminatedProcessesSnapshot().length == 1);
+
+                coordinator.submitIntent(new RenameIntent("/home-user-1/draft.txt", "final.txt"));
+                coordinator.submitIntent(new RenameIntent("/home-user-1/draft.txt", "final.txt"));
+
+                SimulationSnapshot snapshot = waitForSnapshot(s -> s.getTerminatedProcessesSnapshot().length == 3);
+
+                assertNull(findFileSystemNodeByPath(snapshot, "/home-user-1/draft.txt"));
+                assertNotNull(findFileSystemNodeByPath(snapshot, "/home-user-1/final.txt"));
+
+                SimulationSnapshot.ProcessSnapshot firstRename = snapshot.getTerminatedProcessesSnapshot()[1];
+                SimulationSnapshot.ProcessSnapshot secondRename = snapshot.getTerminatedProcessesSnapshot()[2];
+
+                assertEquals(ResultStatus.SUCCESS, firstRename.getResultStatus());
+                assertEquals(ResultStatus.FAILED, secondRename.getResultStatus());
+        }
 
     @Test
     void deleteIntentRemovesFileAndFreesAllocatedBlocks() {
@@ -2319,6 +2404,65 @@ class SimulationCoordinatorTest {
         Path savePath = Files.createTempFile("project2os-admin-queue", ".json");
         assertDoesNotThrow(() -> invokePrivateVoidMethod(coordinator, "saveSystemState", Path.class, savePath));
     }
+
+        @Test
+        void stepModeRequiresManualPermitsToAdvanceSimulation() {
+                coordinator = createCoordinator(new LockTable(), new JournalManager());
+                coordinator.start();
+
+                coordinator.setStepModeEnabled(true);
+                coordinator.submitIntent(new CreateFileIntent("/home-user-1", "manual-step.txt", 1, false, false));
+
+                LockSupport.parkNanos(250_000_000L);
+                SimulationSnapshot pausedSnapshot = coordinator.getLatestSnapshot();
+                assertNotNull(pausedSnapshot);
+                assertNull(findFileSystemNodeByPath(pausedSnapshot, "/home-user-1/manual-step.txt"));
+                assertEquals(0, pausedSnapshot.getTerminatedProcessesSnapshot().length);
+
+                coordinator.stepSimulationOnce();
+                LockSupport.parkNanos(150_000_000L);
+                SimulationSnapshot afterFirstStep = coordinator.getLatestSnapshot();
+                assertNotNull(afterFirstStep);
+                assertEquals(0, afterFirstStep.getTerminatedProcessesSnapshot().length);
+
+                coordinator.stepSimulationOnce();
+                SimulationSnapshot completedSnapshot = waitForSnapshot(
+                                s -> findFileSystemNodeByPath(s, "/home-user-1/manual-step.txt") != null);
+
+                assertNotNull(findFileSystemNodeByPath(completedSnapshot, "/home-user-1/manual-step.txt"));
+        }
+
+        @Test
+        void stepCommandForcesManualModeEvenIfPlaybackWasAutomatic() {
+                coordinator = createCoordinator(new LockTable(), new JournalManager());
+                coordinator.start();
+
+                coordinator.setStepModeEnabled(false);
+                coordinator.stepSimulationOnce();
+
+                long deadline = System.currentTimeMillis() + 2000L;
+                while (System.currentTimeMillis() < deadline && !coordinator.isStepModeEnabled()) {
+                        LockSupport.parkNanos(10_000_000L);
+                }
+
+                assertTrue(coordinator.isStepModeEnabled(), "step command should switch coordinator to manual mode");
+        }
+
+        @Test
+        void executionDelayCanBeUpdatedAndRejectsNegativeValues() {
+                coordinator = createCoordinator(new LockTable(), new JournalManager());
+                coordinator.start();
+
+                assertThrows(IllegalArgumentException.class, () -> coordinator.changeExecutionDelay(-1L));
+
+                coordinator.changeExecutionDelay(25L);
+                long deadline = System.currentTimeMillis() + 2000L;
+                while (System.currentTimeMillis() < deadline && coordinator.getExecutionDelayMillis() != 25L) {
+                        LockSupport.parkNanos(10_000_000L);
+                }
+
+                assertEquals(25L, coordinator.getExecutionDelayMillis());
+        }
 
     private SimulationCoordinator createCoordinator(LockTable lockTable, JournalManager journalManager) {
         return new SimulationCoordinator(

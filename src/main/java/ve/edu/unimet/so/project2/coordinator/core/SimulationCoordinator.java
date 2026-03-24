@@ -31,6 +31,7 @@ import ve.edu.unimet.so.project2.filesystem.FsNode;
 import ve.edu.unimet.so.project2.journal.JournalEntry;
 import ve.edu.unimet.so.project2.journal.JournalManager;
 import ve.edu.unimet.so.project2.journal.undo.CreateFileUndoData;
+import ve.edu.unimet.so.project2.journal.undo.UpdateRenameUndoData;
 import ve.edu.unimet.so.project2.locking.LockAcquireResult;
 import ve.edu.unimet.so.project2.locking.LockReleaseResult;
 import ve.edu.unimet.so.project2.locking.LockWaitEntry;
@@ -78,6 +79,9 @@ public final class SimulationCoordinator {
     private int totalSeekDistance;
     private int activeDiskTasks;
     private int maxConcurrentDiskTasksObserved;
+    private volatile long executionDelayMillis;
+    private volatile boolean stepModeEnabled;
+    private int pendingStepPermits;
 
     private volatile boolean shutdownRequested;
     private volatile boolean started;
@@ -143,6 +147,9 @@ public final class SimulationCoordinator {
         this.totalSeekDistance = 0;
         this.activeDiskTasks = 0;
         this.maxConcurrentDiskTasksObserved = 0;
+        this.executionDelayMillis = 0L;
+        this.stepModeEnabled = false;
+        this.pendingStepPermits = 0;
         this.shutdownRequested = false;
         this.started = false;
         this.acceptingCommands = false;
@@ -230,6 +237,43 @@ public final class SimulationCoordinator {
         channels.enqueueCommand(new ChangeDirectionCoordinatorCommand(direction));
     }
 
+    public void changeExecutionDelay(long delayMillis) {
+        if (delayMillis < 0L) {
+            throw new IllegalArgumentException("delayMillis cannot be negative");
+        }
+        requireStartedAndAcceptingCommands();
+        ensureNotAwaitingRecovery();
+        channels.enqueueCommand(new ChangeExecutionDelayCoordinatorCommand(delayMillis));
+    }
+
+    public long getExecutionDelayMillis() {
+        return executionDelayMillis;
+    }
+
+    public void setStepModeEnabled(boolean enabled) {
+        requireStartedAndAcceptingCommands();
+        ensureNotAwaitingRecovery();
+        channels.enqueueCommand(new SetStepModeCoordinatorCommand(enabled));
+    }
+
+    public boolean isStepModeEnabled() {
+        return stepModeEnabled;
+    }
+
+    public void stepSimulationOnce() {
+        requireStartedAndAcceptingCommands();
+        ensureNotAwaitingRecovery();
+        channels.enqueueCommand(new StepSimulationCoordinatorCommand());
+    }
+
+    public boolean isSimulatedFailureArmed() {
+        return simulatedFailureArmed;
+    }
+
+    public boolean isRecoveryQuarantineActive() {
+        return recoveryQuarantineActive;
+    }
+
     public SimulationSnapshot getLatestSnapshot() {
         return latestSnapshot;
     }
@@ -259,15 +303,22 @@ public final class SimulationCoordinator {
         runSynchronously(new RecoverPendingJournalCoordinatorCommand());
     }
 
+    public void resetSimulation() {
+        requireStartedAndAcceptingCommands();
+        runSynchronously(new ResetSimulationCoordinatorCommand(disk.getTotalBlocks()));
+    }
+
+    public void resetSimulation(int totalBlocks) {
+        if (totalBlocks <= 0) {
+            throw new IllegalArgumentException("totalBlocks must be > 0");
+        }
+        requireStartedAndAcceptingCommands();
+        runSynchronously(new ResetSimulationCoordinatorCommand(totalBlocks));
+    }
+
     private void runCoordinatorLoop() {
         while (true) {
             boolean worked = false;
-
-            DiskServiceResult diskResult = channels.pollCompletedDiskResult();
-            if (diskResult != null) {
-                finishRunningProcess(diskResult);
-                worked = true;
-            }
 
             CoordinatorCommand command = channels.pollCommand();
             if (command != null) {
@@ -275,16 +326,26 @@ public final class SimulationCoordinator {
                 worked = true;
             }
 
-            if (reconcileBlockedLockWaiters()) {
-                worked = true;
-            }
+            boolean canAdvanceSimulation = consumeStepPermitIfNeeded();
 
-            if (materializePendingSubmissions()) {
-                worked = true;
-            }
+            if (canAdvanceSimulation) {
+                DiskServiceResult diskResult = channels.pollCompletedDiskResult();
+                if (diskResult != null) {
+                    finishRunningProcess(diskResult);
+                    worked = true;
+                }
 
-            if (processStore.getRunningProcess() == null && tryDispatchNextReady()) {
-                worked = true;
+                if (reconcileBlockedLockWaiters()) {
+                    worked = true;
+                }
+
+                if (materializePendingSubmissions()) {
+                    worked = true;
+                }
+
+                if (processStore.getRunningProcess() == null && tryDispatchNextReady()) {
+                    worked = true;
+                }
             }
 
             publishSnapshot();
@@ -296,12 +357,25 @@ public final class SimulationCoordinator {
                 break;
             }
 
-            if (!worked) {
+            if (worked && executionDelayMillis > 0L) {
+                sleepQuietly(executionDelayMillis);
+            } else if (!worked) {
                 sleepQuietly(2L);
             }
         }
 
         publishSnapshot();
+    }
+
+    private boolean consumeStepPermitIfNeeded() {
+        if (!stepModeEnabled) {
+            return true;
+        }
+        if (pendingStepPermits <= 0) {
+            return false;
+        }
+        pendingStepPermits--;
+        return true;
     }
 
     private void runDiskLoop() {
@@ -355,10 +429,21 @@ public final class SimulationCoordinator {
             return true;
         }
 
+        ProcessExecutionContext context = processStore.requireContext(selected.getProcessId());
+        OperationApplyResult preExecutionFailure = resolvePreExecutionFailure(context);
+        if (preExecutionFailure != null) {
+            releaseProcessLock(selected);
+            selected.markTerminated(preExecutionFailure.getResultStatus(), nextTick++, preExecutionFailure.getErrorMessage());
+            processStore.addTerminatedProcess(selected);
+            recordEvent(
+                    "PROCESS",
+                    "process " + selected.getProcessId() + " terminated with " + preExecutionFailure.getResultStatus());
+            return true;
+        }
+
         selected.markRunning(nextTick++);
         processStore.setRunningProcess(selected);
 
-        ProcessExecutionContext context = processStore.requireContext(selected.getProcessId());
         registerPendingJournalIfNeeded(context);
         applyDispatchDecision(selected, decision);
         channels.publishDiskTask(new DiskTask(
@@ -369,6 +454,25 @@ public final class SimulationCoordinator {
                 decision.getTraveledDistance()));
         recordActiveDiskTask();
         return true;
+    }
+
+    private OperationApplyResult resolvePreExecutionFailure(ProcessExecutionContext context) {
+        PreparedOperationCommand command = context.getCommand();
+        if (command.getOperationType() != IoOperationType.UPDATE || command.getPreparedJournalData() == null) {
+            return null;
+        }
+        if (!(command.getPreparedJournalData().getUndoData() instanceof UpdateRenameUndoData renameUndoData)) {
+            return null;
+        }
+
+        FsNode currentTarget = applicationState.getFileSystemCatalog().findById(command.getTargetNodeId());
+        if (currentTarget == null) {
+            return null;
+        }
+        if (renameUndoData.getNewName().equals(currentTarget.getName())) {
+            return OperationApplyResult.failed("rename target already has requested name");
+        }
+        return null;
     }
 
     private void registerPendingJournalIfNeeded(ProcessExecutionContext context) {
@@ -753,6 +857,8 @@ public final class SimulationCoordinator {
                 loadedState.applicationState(),
                 loadedState.journalManager(),
                 loadedState.policy());
+        stepModeEnabled = true;
+        pendingStepPermits = 0;
         recordEvent("PERSISTENCE", "system loaded from " + path);
         publishSnapshot();
     }
@@ -779,6 +885,8 @@ public final class SimulationCoordinator {
         }
         nextArrivalOrder = stagedRegistrations.length;
         nextTick = stagedRegistrations.length * 2L;
+        stepModeEnabled = true;
+        pendingStepPermits = 0;
         recordEvent("SCENARIO", "scenario loaded from " + path + " with " + stagedRegistrations.length + " requests");
         publishSnapshot();
     }
@@ -794,6 +902,28 @@ public final class SimulationCoordinator {
         simulatedFailureArmed = false;
         queuedIntentCancellationUserId = null;
         recordEvent("RECOVERY", "recovered in-memory pending journal entries");
+        publishSnapshot();
+    }
+
+    private void resetSimulationState(int totalBlocks) {
+        ensureCoordinatorIdleForAdminOperation();
+        if (totalBlocks <= 0) {
+            throw new IllegalArgumentException("totalBlocks must be > 0");
+        }
+
+        DiskHeadDirection currentDirection = disk.getHead().getDirection();
+        SimulationApplicationState defaultState = SimulationApplicationState.createDefault();
+        SimulatedDisk resetDisk = new SimulatedDisk(totalBlocks, 0, currentDirection);
+
+        applyLoadedState(
+                resetDisk,
+                defaultState,
+                new JournalManager(),
+                activePolicy);
+        executionDelayMillis = 0L;
+        stepModeEnabled = false;
+        pendingStepPermits = 0;
+        recordEvent("SYSTEM", "simulation reset to defaults with " + totalBlocks + " blocks");
         publishSnapshot();
     }
 
@@ -1109,14 +1239,14 @@ public final class SimulationCoordinator {
 
         while (!pendingSubmissions.isEmpty()) {
             PendingSubmission next = pendingSubmissions.peek();
-            if (next.intent != null && processStore.hasActiveProcesses()) {
-                break;
-            }
-
             pendingSubmissions.dequeue();
             if (next.intent != null) {
-                materializeIntentSubmission(next);
+                boolean completed = materializeIntentSubmission(next);
                 changed = true;
+                if (!completed) {
+                    // Deferred retry: avoid spinning through the queue in the same loop tick.
+                    break;
+                }
                 continue;
             }
 
@@ -1131,13 +1261,13 @@ public final class SimulationCoordinator {
         return changed;
     }
 
-    private void materializeIntentSubmission(PendingSubmission pendingIntent) {
+    private boolean materializeIntentSubmission(PendingSubmission pendingIntent) {
         try {
             if (pendingIntent.intent instanceof SwitchSessionIntent switchSessionIntent) {
                 applicationState.getSessionContext().switchTo(
                         applicationState.getUserStore().requireById(switchSessionIntent.getTargetUserId()));
                 recordEvent("SESSION", "switched session to " + switchSessionIntent.getTargetUserId());
-                return;
+                return true;
             }
 
             ApplicationOperationIntent intent = pendingIntent.intent;
@@ -1150,7 +1280,12 @@ public final class SimulationCoordinator {
                     pendingIntent.requestId,
                     pendingIntent.processId);
             handleSubmitOperation(command);
+            return true;
         } catch (RuntimeException exception) {
+            if (shouldRetryIntentPlanning(exception)) {
+                pendingSubmissions.enqueue(pendingIntent);
+                return false;
+            }
             processStore.addRejectedTerminatedProcess(
                     pendingIntent.processId,
                     pendingIntent.requestId,
@@ -1161,7 +1296,17 @@ public final class SimulationCoordinator {
                     0,
                     exception.getMessage());
             recordEvent("PROCESS", "rejected intent " + pendingIntent.processId + ": " + exception.getMessage());
+            return true;
         }
+    }
+
+    private boolean shouldRetryIntentPlanning(RuntimeException exception) {
+        if (exception == null || exception.getMessage() == null) {
+            return false;
+        }
+        String message = exception.getMessage().toLowerCase();
+        return processStore.hasActiveProcesses()
+                && message.contains("node not found at path");
     }
 
     private void executeCommandSafely(CoordinatorCommand command) {
@@ -1345,6 +1490,7 @@ public final class SimulationCoordinator {
         recordEvent(
                 "CRASH",
                 "coordinator quarantined after simulated crash in process " + crashedCommand.getProcessId());
+        recordEvent("CRASH", "system quarantined until recovery");
     }
 
     private void cancelPendingSubmissionsDueToCrash(String reason) {
@@ -1520,6 +1666,7 @@ public final class SimulationCoordinator {
                 return;
             }
             activePolicy = policy;
+            recordEvent("SCHEDULER", "disk scheduling policy changed to " + policy.name());
         }
     }
 
@@ -1538,6 +1685,61 @@ public final class SimulationCoordinator {
                 return;
             }
             disk.setHeadDirection(direction);
+        }
+    }
+
+    private final class ChangeExecutionDelayCoordinatorCommand implements CoordinatorCommand {
+
+        private final long delayMillis;
+
+        private ChangeExecutionDelayCoordinatorCommand(long delayMillis) {
+            this.delayMillis = delayMillis;
+        }
+
+        @Override
+        public void execute() {
+            if (recoveryQuarantineActive) {
+                recordEvent("CRASH", "ignored execution delay change during recovery quarantine");
+                return;
+            }
+            executionDelayMillis = delayMillis;
+            recordEvent("PLAYBACK", "execution delay set to " + delayMillis + " ms");
+        }
+    }
+
+    private final class SetStepModeCoordinatorCommand implements CoordinatorCommand {
+
+        private final boolean enabled;
+
+        private SetStepModeCoordinatorCommand(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        @Override
+        public void execute() {
+            if (recoveryQuarantineActive) {
+                recordEvent("CRASH", "ignored step mode change during recovery quarantine");
+                return;
+            }
+            stepModeEnabled = enabled;
+            if (!enabled) {
+                pendingStepPermits = 0;
+            }
+            recordEvent("PLAYBACK", enabled ? "step mode enabled" : "step mode disabled");
+        }
+    }
+
+    private final class StepSimulationCoordinatorCommand implements CoordinatorCommand {
+
+        @Override
+        public void execute() {
+            if (recoveryQuarantineActive) {
+                recordEvent("CRASH", "ignored step command during recovery quarantine");
+                return;
+            }
+            stepModeEnabled = true;
+            pendingStepPermits++;
+            recordEvent("PLAYBACK", "queued manual simulation step");
         }
     }
 
@@ -1587,6 +1789,10 @@ public final class SimulationCoordinator {
 
         @Override
         public void execute() {
+            if (recoveryQuarantineActive) {
+                recordEvent("CRASH", "ignored simulated failure arm during recovery quarantine");
+                return;
+            }
             simulatedFailureArmed = true;
             recordEvent("CRASH", "simulated failure armed for next successful journaled operation");
         }
@@ -1597,6 +1803,20 @@ public final class SimulationCoordinator {
         @Override
         public void execute() {
             recoverPendingJournalEntriesInMemory();
+        }
+    }
+
+    private final class ResetSimulationCoordinatorCommand implements CoordinatorCommand {
+
+        private final int totalBlocks;
+
+        private ResetSimulationCoordinatorCommand(int totalBlocks) {
+            this.totalBlocks = totalBlocks;
+        }
+
+        @Override
+        public void execute() {
+            resetSimulationState(totalBlocks);
         }
     }
 

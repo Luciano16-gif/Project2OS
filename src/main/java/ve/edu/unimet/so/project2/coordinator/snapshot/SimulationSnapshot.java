@@ -439,18 +439,21 @@ public final class SimulationSnapshot {
         private final String transactionId;
         private final IoOperationType operationType;
         private final String targetPath;
+        private final String ownerUserId;
         private final JournalStatus status;
 
         public JournalEntrySummary(
                 String transactionId,
                 IoOperationType operationType,
                 String targetPath,
+                String ownerUserId,
                 JournalStatus status) {
             this.transactionId = requireNonBlank(transactionId, "transactionId");
             if (operationType == null) {
                 throw new IllegalArgumentException("operationType cannot be null");
             }
             this.targetPath = requireNonBlank(targetPath, "targetPath");
+            this.ownerUserId = normalizeOptional(ownerUserId);
             if (status == null) {
                 throw new IllegalArgumentException("status cannot be null");
             }
@@ -468,6 +471,10 @@ public final class SimulationSnapshot {
 
         public String getTargetPath() {
             return targetPath;
+        }
+
+        public String getOwnerUserId() {
+            return ownerUserId;
         }
 
         public JournalStatus getStatus() {
