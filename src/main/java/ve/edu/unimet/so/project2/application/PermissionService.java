@@ -10,42 +10,28 @@ public final class PermissionService {
 
     public void ensureCanCreate(User actor, DirectoryNode parentDirectory, boolean systemFile) {
         ensureActor(actor);
-        if (actor.getRole() == Role.ADMIN) {
-            return;
-        }
-        if (systemFile) {
-            throw new IllegalArgumentException("only ADMIN can create system files");
-        }
-        if (parentDirectory.isRoot()) {
-            throw new IllegalArgumentException("USER cannot create directly under root");
-        }
-        if (!actor.getUserId().equals(parentDirectory.getOwnerUserId())) {
-            throw new IllegalArgumentException("USER can only create under owned directories");
+        if (parentDirectory == null) {
+            throw new IllegalArgumentException("parentDirectory cannot be null");
         }
     }
 
     public void ensureCanRead(User actor, FsNode targetNode) {
         ensureActor(actor);
-        if (actor.getRole() == Role.ADMIN) {
-            return;
-        }
-        if (actor.getUserId().equals(targetNode.getOwnerUserId())) {
-            return;
-        }
-        if (!targetNode.getPermissions().isPublicReadable()) {
-            throw new IllegalArgumentException("current user cannot read this resource");
+        if (targetNode == null) {
+            throw new IllegalArgumentException("targetNode cannot be null");
         }
     }
 
     public void ensureCanModify(User actor, FsNode targetNode) {
         ensureActor(actor);
+        if (targetNode == null) {
+            throw new IllegalArgumentException("targetNode cannot be null");
+        }
         if (actor.getRole() == Role.ADMIN) {
             return;
         }
-        if (targetNode instanceof FileNode file && file.isSystemFile()) {
-            throw new IllegalArgumentException("USER cannot modify system files");
-        }
-        if (!actor.getUserId().equals(targetNode.getOwnerUserId())) {
+        if (targetNode instanceof FileNode file
+                && !actor.getUserId().equals(file.getOwnerUserId())) {
             throw new IllegalArgumentException("current user cannot modify this resource");
         }
     }
