@@ -826,6 +826,8 @@ public final class SimulationCoordinator {
                 loadedState.applicationState(),
                 loadedState.journalManager(),
                 loadedState.policy());
+        stepModeEnabled = true;
+        pendingStepPermits = 0;
         recordEvent("PERSISTENCE", "system loaded from " + path);
         publishSnapshot();
     }
@@ -852,6 +854,8 @@ public final class SimulationCoordinator {
         }
         nextArrivalOrder = stagedRegistrations.length;
         nextTick = stagedRegistrations.length * 2L;
+        stepModeEnabled = true;
+        pendingStepPermits = 0;
         recordEvent("SCENARIO", "scenario loaded from " + path + " with " + stagedRegistrations.length + " requests");
         publishSnapshot();
     }

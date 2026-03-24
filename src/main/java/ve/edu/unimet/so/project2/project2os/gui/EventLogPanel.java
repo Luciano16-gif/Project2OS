@@ -75,6 +75,5 @@ public class EventLogPanel extends JPanel {
     
     public void clearLog() {
         textArea.setText("");
-        lastSeenSequence = -1;
     }
 }

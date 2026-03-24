@@ -27,6 +27,9 @@ public class GuiController {
         this.recoveryPopupShown = false;
         this.notifiedIntentFailures = new HashSet<>();
 
+        // GUI policy: start in paused/manual mode.
+        runCoordinatorAction("Error configurando modo inicial", () -> coordinator.setStepModeEnabled(true));
+
         // Refresh at 150ms intervals
         this.refreshTimer = new Timer(150, e -> refreshFromSnapshot());
 
@@ -231,6 +234,7 @@ public class GuiController {
         }
         try {
             coordinator.loadSystem(selected);
+            coordinator.setStepModeEnabled(true);
             refreshFromSnapshot();
             JOptionPane.showMessageDialog(mainFrame, "Sistema cargado desde:\n" + selected, "Carga completada",
                     JOptionPane.INFORMATION_MESSAGE);
@@ -252,6 +256,7 @@ public class GuiController {
         }
         try {
             coordinator.loadScenario(selected);
+            coordinator.setStepModeEnabled(true);
             refreshFromSnapshot();
             JOptionPane.showMessageDialog(mainFrame, "Escenario cargado desde:\n" + selected, "Escenario cargado",
                     JOptionPane.INFORMATION_MESSAGE);
@@ -498,7 +503,18 @@ public class GuiController {
     private void updateActionButtonsBySystemState(boolean recoveryRequired) {
         boolean enableGeneralActions = !recoveryRequired;
 
-        // ADMIN y USER comparten acciones CRUD; en quarantine quedan bloqueadas.
+        // En recovery quarantine solo se permite recovery/load system/estadisticas.
+        mainFrame.getBtnAdmin().setEnabled(enableGeneralActions);
+        mainFrame.getBtnUser().setEnabled(enableGeneralActions);
+        mainFrame.getBtnPlay().setEnabled(enableGeneralActions);
+        mainFrame.getBtnPause().setEnabled(enableGeneralActions);
+        mainFrame.getBtnStep().setEnabled(enableGeneralActions);
+        mainFrame.getComboPlaybackSpeed().setEnabled(enableGeneralActions);
+        mainFrame.getComboPolicy().setEnabled(enableGeneralActions);
+        mainFrame.getBtnPolicyChange().setEnabled(enableGeneralActions);
+        mainFrame.getBtnSimularFallo().setEnabled(enableGeneralActions);
+        mainFrame.getBtnAdvanced().setEnabled(enableGeneralActions);
+
         mainFrame.getBtnCreateFile().setEnabled(enableGeneralActions);
         mainFrame.getBtnCreateDir().setEnabled(enableGeneralActions);
         mainFrame.getBtnRead().setEnabled(enableGeneralActions);
@@ -510,7 +526,6 @@ public class GuiController {
         mainFrame.getBtnStats().setEnabled(true);
         mainFrame.getBtnLoadSystem().setEnabled(true);
         mainFrame.getBtnRecovery().setEnabled(true);
-        mainFrame.getBtnAdvanced().setEnabled(true);
     }
 
     private void updateFailureUxState(boolean failureArmed, boolean recoveryRequired) {
@@ -547,10 +562,10 @@ public class GuiController {
         if (snapshot == null)
             return;
 
-        showAsyncIntentFailurePopups(snapshot);
-
         boolean recoveryRequired = coordinator.isRecoveryQuarantineActive();
         boolean failureArmed = coordinator.isSimulatedFailureArmed() && !recoveryRequired;
+
+        showAsyncIntentFailurePopups(snapshot, recoveryRequired);
 
         updateActionButtonsBySystemState(recoveryRequired);
         updateFailureUxState(failureArmed, recoveryRequired);
@@ -581,7 +596,11 @@ public class GuiController {
         mainFrame.getLblStatusRight().setText(statusRight);
     }
 
-    private void showAsyncIntentFailurePopups(SimulationSnapshot snapshot) {
+    private void showAsyncIntentFailurePopups(SimulationSnapshot snapshot, boolean recoveryRequired) {
+        if (recoveryRequired) {
+            return;
+        }
+
         SimulationSnapshot.ProcessSnapshot[] terminated = snapshot.getTerminatedProcessesSnapshot();
         Set<String> currentTerminatedIds = new HashSet<>();
 
@@ -593,7 +612,7 @@ public class GuiController {
             if (!isManualIntentProcess(process)) {
                 continue;
             }
-            if (process.getResultStatus() == ve.edu.unimet.so.project2.process.ResultStatus.SUCCESS) {
+            if (process.getResultStatus() != ve.edu.unimet.so.project2.process.ResultStatus.FAILED) {
                 continue;
             }
             if (notifiedIntentFailures.contains(process.getProcessId())) {
