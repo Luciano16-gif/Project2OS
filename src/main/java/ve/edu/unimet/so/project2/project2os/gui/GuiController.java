@@ -823,6 +823,9 @@ public class GuiController {
         if (lower.contains("duplicate child name under parent") || lower.contains("already exists at path")) {
             return "Ya existe un archivo o directorio con ese nombre en la carpeta destino.";
         }
+        if (lower.contains("already has requested name")) {
+            return "El nombre solicitado ya estaba aplicado. La operación de renombrado no realizó cambios.";
+        }
         if (lower.contains("root cannot be renamed")) {
             return "No se puede renombrar la raíz del sistema de archivos.";
         }

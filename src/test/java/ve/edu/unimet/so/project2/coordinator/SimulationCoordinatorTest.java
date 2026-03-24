@@ -1268,6 +1268,31 @@ class SimulationCoordinatorTest {
                 snapshot.getTerminatedProcessesSnapshot()[1].getResultStatus());
     }
 
+        @Test
+        void secondConcurrentRenameToSameNameFailsAsNoOp() {
+                coordinator = createCoordinator(new LockTable(), new JournalManager());
+                coordinator.start();
+
+                coordinator.submitIntent(new SwitchSessionIntent("user-1"));
+                waitForSnapshot(s -> "user-1".equals(s.getSessionSummary().getCurrentUserId()));
+                coordinator.submitIntent(new CreateFileIntent("/home-user-1", "draft.txt", 1, false, false));
+                waitForSnapshot(s -> s.getTerminatedProcessesSnapshot().length == 1);
+
+                coordinator.submitIntent(new RenameIntent("/home-user-1/draft.txt", "final.txt"));
+                coordinator.submitIntent(new RenameIntent("/home-user-1/draft.txt", "final.txt"));
+
+                SimulationSnapshot snapshot = waitForSnapshot(s -> s.getTerminatedProcessesSnapshot().length == 3);
+
+                assertNull(findFileSystemNodeByPath(snapshot, "/home-user-1/draft.txt"));
+                assertNotNull(findFileSystemNodeByPath(snapshot, "/home-user-1/final.txt"));
+
+                SimulationSnapshot.ProcessSnapshot firstRename = snapshot.getTerminatedProcessesSnapshot()[1];
+                SimulationSnapshot.ProcessSnapshot secondRename = snapshot.getTerminatedProcessesSnapshot()[2];
+
+                assertEquals(ResultStatus.SUCCESS, firstRename.getResultStatus());
+                assertEquals(ResultStatus.FAILED, secondRename.getResultStatus());
+        }
+
     @Test
     void deleteIntentRemovesFileAndFreesAllocatedBlocks() {
         coordinator = createCoordinator(new LockTable(), new JournalManager());

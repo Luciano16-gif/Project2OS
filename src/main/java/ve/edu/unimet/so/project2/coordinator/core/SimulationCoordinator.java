@@ -31,6 +31,7 @@ import ve.edu.unimet.so.project2.filesystem.FsNode;
 import ve.edu.unimet.so.project2.journal.JournalEntry;
 import ve.edu.unimet.so.project2.journal.JournalManager;
 import ve.edu.unimet.so.project2.journal.undo.CreateFileUndoData;
+import ve.edu.unimet.so.project2.journal.undo.UpdateRenameUndoData;
 import ve.edu.unimet.so.project2.locking.LockAcquireResult;
 import ve.edu.unimet.so.project2.locking.LockReleaseResult;
 import ve.edu.unimet.so.project2.locking.LockWaitEntry;
@@ -428,10 +429,21 @@ public final class SimulationCoordinator {
             return true;
         }
 
+        ProcessExecutionContext context = processStore.requireContext(selected.getProcessId());
+        OperationApplyResult preExecutionFailure = resolvePreExecutionFailure(context);
+        if (preExecutionFailure != null) {
+            releaseProcessLock(selected);
+            selected.markTerminated(preExecutionFailure.getResultStatus(), nextTick++, preExecutionFailure.getErrorMessage());
+            processStore.addTerminatedProcess(selected);
+            recordEvent(
+                    "PROCESS",
+                    "process " + selected.getProcessId() + " terminated with " + preExecutionFailure.getResultStatus());
+            return true;
+        }
+
         selected.markRunning(nextTick++);
         processStore.setRunningProcess(selected);
 
-        ProcessExecutionContext context = processStore.requireContext(selected.getProcessId());
         registerPendingJournalIfNeeded(context);
         applyDispatchDecision(selected, decision);
         channels.publishDiskTask(new DiskTask(
@@ -442,6 +454,25 @@ public final class SimulationCoordinator {
                 decision.getTraveledDistance()));
         recordActiveDiskTask();
         return true;
+    }
+
+    private OperationApplyResult resolvePreExecutionFailure(ProcessExecutionContext context) {
+        PreparedOperationCommand command = context.getCommand();
+        if (command.getOperationType() != IoOperationType.UPDATE || command.getPreparedJournalData() == null) {
+            return null;
+        }
+        if (!(command.getPreparedJournalData().getUndoData() instanceof UpdateRenameUndoData renameUndoData)) {
+            return null;
+        }
+
+        FsNode currentTarget = applicationState.getFileSystemCatalog().findById(command.getTargetNodeId());
+        if (currentTarget == null) {
+            return null;
+        }
+        if (renameUndoData.getNewName().equals(currentTarget.getName())) {
+            return OperationApplyResult.failed("rename target already has requested name");
+        }
+        return null;
     }
 
     private void registerPendingJournalIfNeeded(ProcessExecutionContext context) {
