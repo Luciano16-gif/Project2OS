@@ -109,11 +109,19 @@ public class GuiController {
                 return;
             }
             String name = JOptionPane.showInputDialog(mainFrame, "Nombre del archivo:");
-            if (name == null || name.isBlank())
+            if (name == null)
                 return;
+            if (name.isBlank()) {
+                showError("El nombre del archivo no puede estar vacío.");
+                return;
+            }
             String sizeStr = JOptionPane.showInputDialog(mainFrame, "Tamaño en bloques:");
-            if (sizeStr == null || sizeStr.isBlank())
+            if (sizeStr == null)
                 return;
+            if (sizeStr.isBlank()) {
+                showError("El tamaño en bloques no puede estar vacío.");
+                return;
+            }
 
             try {
                 int size = parseRequiredPositiveInt(sizeStr, "La cantidad de bloques debe ser un número entero mayor que 0.");
@@ -142,8 +150,12 @@ public class GuiController {
                 return;
             }
             String name = JOptionPane.showInputDialog(mainFrame, "Nombre del directorio:");
-            if (name == null || name.isBlank())
+            if (name == null)
                 return;
+            if (name.isBlank()) {
+                showError("El nombre del directorio no puede estar vacío.");
+                return;
+            }
             try {
                 coordinator.submitIntent(new CreateDirectoryIntent(parent, name, false));
             } catch (Exception ex) {
@@ -171,8 +183,12 @@ public class GuiController {
                 return;
             }
             String name = JOptionPane.showInputDialog(mainFrame, "Nuevo nombre:");
-            if (name == null || name.isBlank())
+            if (name == null)
                 return;
+            if (name.isBlank()) {
+                showError("El nuevo nombre no puede estar vacío.");
+                return;
+            }
             try {
                 coordinator.submitIntent(new RenameIntent(target, name));
             } catch (Exception ex) {
@@ -224,7 +240,7 @@ public class GuiController {
             JOptionPane.showMessageDialog(mainFrame, "Sistema guardado en:\n" + selected, "Guardado",
                     JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
-            showError("Error guardando sistema: " + ex.getMessage());
+            showAdministrativeError("guardar el sistema", ex);
         }
     }
 
@@ -240,7 +256,7 @@ public class GuiController {
             JOptionPane.showMessageDialog(mainFrame, "Sistema cargado desde:\n" + selected, "Carga completada",
                     JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
-            showError("Error cargando sistema: " + ex.getMessage());
+            showAdministrativeError("cargar el sistema", ex);
         }
     }
 
@@ -262,7 +278,7 @@ public class GuiController {
             JOptionPane.showMessageDialog(mainFrame, "Escenario cargado desde:\n" + selected, "Escenario cargado",
                     JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
-            showError("Error cargando escenario: " + ex.getMessage());
+            showAdministrativeError("cargar el escenario", ex);
         }
     }
 
@@ -312,7 +328,7 @@ public class GuiController {
                     "Reset completado",
                     JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
-            showError("Error reseteando simulación: " + ex.getMessage());
+            showAdministrativeError("resetear la simulación", ex);
         }
     }
 
@@ -349,7 +365,7 @@ public class GuiController {
                     "Bloques actualizados",
                     JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
-            showError("Error cambiando cantidad de bloques: " + ex.getMessage());
+            showAdministrativeError("cambiar la cantidad de bloques", ex);
         }
     }
 
@@ -387,7 +403,7 @@ public class GuiController {
                     "Dirección actualizada",
                     JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
-            showError("Error cambiando dirección del cabezal: " + ex.getMessage());
+            showAdministrativeError("cambiar la dirección del cabezal", ex);
         }
     }
 
@@ -604,6 +620,9 @@ public class GuiController {
         if (snapshot == null)
             return;
 
+        // Keep playback label aligned with the actual coordinator state.
+        updatePlaybackLabel();
+
         boolean recoveryRequired = coordinator.isRecoveryQuarantineActive();
         boolean failureArmed = coordinator.isSimulatedFailureArmed() && !recoveryRequired;
 
@@ -738,6 +757,46 @@ public class GuiController {
         }
 
         showError(toFriendlyErrorMessage(operation, message));
+    }
+
+    private void showAdministrativeError(String action, Exception ex) {
+        String message = ex.getMessage();
+        if (message == null || message.isBlank()) {
+            message = ex.getClass().getSimpleName();
+        }
+        showError(toFriendlyAdministrativeErrorMessage(action, message));
+    }
+
+    private String toFriendlyAdministrativeErrorMessage(String action, String rawMessage) {
+        String message = rawMessage == null || rawMessage.isBlank() ? "Error desconocido" : rawMessage;
+        String lower = message.toLowerCase();
+
+        if (lower.contains("failed to load scenario")) {
+            return "No se pudo cargar el escenario JSON. Verifica que el archivo exista y tenga formato válido.";
+        }
+        if (lower.contains("scenario initial_head is out of range") || lower.contains("initial_head")) {
+            return "El escenario tiene un initial_head fuera del rango de bloques del disco.";
+        }
+        if (lower.contains("scenario request pos is out of range")) {
+            return "El escenario contiene requests con posiciones de bloque fuera de rango.";
+        }
+        if (lower.contains("scenario system file") && lower.contains("out of range")) {
+            return "El escenario define archivos de sistema con bloques fuera de rango.";
+        }
+        if (lower.contains("failed to load system state")) {
+            return "No se pudo cargar el estado del sistema. El archivo puede estar corrupto o no ser válido.";
+        }
+        if (lower.contains("failed to save system state")) {
+            return "No se pudo guardar el estado del sistema. Verifica permisos y ruta del archivo.";
+        }
+        if (lower.contains("path cannot be null")) {
+            return "Debes seleccionar un archivo válido para completar esta acción.";
+        }
+        if (lower.contains("coordinator is awaiting recovery")) {
+            return "No se puede " + action + " mientras el sistema está en modo de recovery pendiente.";
+        }
+
+        return "No se pudo " + action + ". Verifica los datos e inténtalo de nuevo.";
     }
 
     private String toFriendlyErrorMessage(String operation, String rawMessage) {
