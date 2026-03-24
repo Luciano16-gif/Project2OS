@@ -20,7 +20,7 @@ public final class UpdateRenameUndoData implements JournalUndoData {
         validateNodeName(oldName, "oldName");
         validateNodeName(newName, "newName");
         if (oldName.equals(newName)) {
-            throw new IllegalArgumentException("oldName and newName must be different");
+            throw new IllegalArgumentException("el nuevo nombre debe ser diferente al actual");
         }
         this.oldName = oldName;
         this.newName = newName;
