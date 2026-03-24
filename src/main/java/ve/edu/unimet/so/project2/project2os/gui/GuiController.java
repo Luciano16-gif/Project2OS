@@ -8,6 +8,7 @@ import ve.edu.unimet.so.project2.scheduler.DiskSchedulingPolicy;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import java.awt.Cursor;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Set;
@@ -19,6 +20,7 @@ public class GuiController {
     private final Timer refreshTimer;
     private boolean recoveryPopupShown;
     private final Set<String> notifiedIntentFailures;
+    private volatile boolean administrativeTaskRunning;
 
     private static final String ARMED_TOOLTIP = "El próximo commit journaled disparará un fallo simulado";
 
@@ -27,6 +29,7 @@ public class GuiController {
         this.mainFrame = mainFrame;
         this.recoveryPopupShown = false;
         this.notifiedIntentFailures = new HashSet<>();
+        this.administrativeTaskRunning = false;
 
         // GUI policy: start in paused/manual mode.
         runCoordinatorAction("Error configurando modo inicial", () -> coordinator.setStepModeEnabled(true));
@@ -220,47 +223,49 @@ public class GuiController {
             });
         });
 
-        mainFrame.getBtnRecovery().addActionListener(e -> {
-            runCoordinatorAction("Error ejecutando recovery", () -> {
-                coordinator.recoverPendingJournalEntries();
-                refreshFromSnapshot();
-                JOptionPane.showMessageDialog(mainFrame, "Recovery completado.", "Recovery", JOptionPane.INFORMATION_MESSAGE);
-            });
-        });
+        mainFrame.getBtnRecovery().addActionListener(e -> runAdministrativeActionAsync(
+                "ejecutar recovery",
+                coordinator::recoverPendingJournalEntries,
+                () -> JOptionPane.showMessageDialog(mainFrame, "Recovery completado.", "Recovery", JOptionPane.INFORMATION_MESSAGE)));
     }
 
     private void handleSaveSystem() {
+        if (administrativeTaskRunning) {
+            showError("Ya hay una operación administrativa en progreso. Espera a que termine.");
+            return;
+        }
         Path selected = chooseFileToSave("Guardar estado del sistema", "system-state.json");
         if (selected == null) {
             return;
         }
-        try {
-            coordinator.saveSystem(selected);
-            refreshFromSnapshot();
-            JOptionPane.showMessageDialog(mainFrame, "Sistema guardado en:\n" + selected, "Guardado",
-                    JOptionPane.INFORMATION_MESSAGE);
-        } catch (Exception ex) {
-            showAdministrativeError("guardar el sistema", ex);
-        }
+        runAdministrativeActionAsync(
+                "guardar el sistema",
+                () -> coordinator.saveSystem(selected),
+                () -> JOptionPane.showMessageDialog(mainFrame, "Sistema guardado en:\n" + selected, "Guardado",
+                        JOptionPane.INFORMATION_MESSAGE));
     }
 
     private void handleLoadSystem() {
+        if (administrativeTaskRunning) {
+            showError("Ya hay una operación administrativa en progreso. Espera a que termine.");
+            return;
+        }
         Path selected = chooseFileToOpen("Cargar estado del sistema");
         if (selected == null) {
             return;
         }
-        try {
-            coordinator.loadSystem(selected);
-            coordinator.setStepModeEnabled(true);
-            refreshFromSnapshot();
-            JOptionPane.showMessageDialog(mainFrame, "Sistema cargado desde:\n" + selected, "Carga completada",
-                    JOptionPane.INFORMATION_MESSAGE);
-        } catch (Exception ex) {
-            showAdministrativeError("cargar el sistema", ex);
-        }
+        runAdministrativeActionAsync(
+                "cargar el sistema",
+                () -> coordinator.loadSystem(selected),
+                () -> JOptionPane.showMessageDialog(mainFrame, "Sistema cargado desde:\n" + selected, "Carga completada",
+                        JOptionPane.INFORMATION_MESSAGE));
     }
 
     private void handleLoadScenario() {
+        if (administrativeTaskRunning) {
+            showError("Ya hay una operación administrativa en progreso. Espera a que termine.");
+            return;
+        }
         SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
         if (!isCoordinatorIdle(snapshot)) {
             showError(buildBusyScenarioMessage(snapshot));
@@ -271,15 +276,11 @@ public class GuiController {
         if (selected == null) {
             return;
         }
-        try {
-            coordinator.loadScenario(selected);
-            coordinator.setStepModeEnabled(true);
-            refreshFromSnapshot();
-            JOptionPane.showMessageDialog(mainFrame, "Escenario cargado desde:\n" + selected, "Escenario cargado",
-                    JOptionPane.INFORMATION_MESSAGE);
-        } catch (Exception ex) {
-            showAdministrativeError("cargar el escenario", ex);
-        }
+        runAdministrativeActionAsync(
+                "cargar el escenario",
+                () -> coordinator.loadScenario(selected),
+                () -> JOptionPane.showMessageDialog(mainFrame, "Escenario cargado desde:\n" + selected, "Escenario cargado",
+                        JOptionPane.INFORMATION_MESSAGE));
     }
 
     private void handleAdvancedOptions() {
@@ -319,17 +320,14 @@ public class GuiController {
             return;
         }
 
-        try {
-            coordinator.resetSimulation();
-            refreshFromSnapshot();
-            JOptionPane.showMessageDialog(
-                    mainFrame,
-                    "La simulación fue reseteada correctamente.",
-                    "Reset completado",
-                    JOptionPane.INFORMATION_MESSAGE);
-        } catch (Exception ex) {
-            showAdministrativeError("resetear la simulación", ex);
-        }
+        runAdministrativeActionAsync(
+                "resetear la simulación",
+                coordinator::resetSimulation,
+                () -> JOptionPane.showMessageDialog(
+                        mainFrame,
+                        "La simulación fue reseteada correctamente.",
+                        "Reset completado",
+                        JOptionPane.INFORMATION_MESSAGE));
     }
 
     private void handleChangeBlockCount() {
@@ -356,17 +354,14 @@ public class GuiController {
             return;
         }
 
-        try {
-            coordinator.resetSimulation(selectedOption);
-            refreshFromSnapshot();
-            JOptionPane.showMessageDialog(
-                    mainFrame,
-                    "Cantidad de bloques actualizada a " + selectedOption + ".",
-                    "Bloques actualizados",
-                    JOptionPane.INFORMATION_MESSAGE);
-        } catch (Exception ex) {
-            showAdministrativeError("cambiar la cantidad de bloques", ex);
-        }
+        runAdministrativeActionAsync(
+                "cambiar la cantidad de bloques",
+                () -> coordinator.resetSimulation(selectedOption),
+                () -> JOptionPane.showMessageDialog(
+                        mainFrame,
+                        "Cantidad de bloques actualizada a " + selectedOption + ".",
+                        "Bloques actualizados",
+                        JOptionPane.INFORMATION_MESSAGE));
     }
 
     private void handleChangeHeadDirection() {
@@ -395,16 +390,66 @@ public class GuiController {
 
         try {
             DiskHeadDirection newDirection = DiskHeadDirection.valueOf(selectedOption);
-            coordinator.changeHeadDirection(newDirection);
-            refreshFromSnapshot();
-            JOptionPane.showMessageDialog(
-                    mainFrame,
-                    "Dirección del cabezal cambiada a " + newDirection + ".",
-                    "Dirección actualizada",
-                    JOptionPane.INFORMATION_MESSAGE);
+            runAdministrativeActionAsync(
+                    "cambiar la dirección del cabezal",
+                    () -> coordinator.changeHeadDirection(newDirection),
+                    () -> JOptionPane.showMessageDialog(
+                            mainFrame,
+                            "Dirección del cabezal cambiada a " + newDirection + ".",
+                            "Dirección actualizada",
+                            JOptionPane.INFORMATION_MESSAGE));
         } catch (Exception ex) {
             showAdministrativeError("cambiar la dirección del cabezal", ex);
         }
+    }
+
+    private void runAdministrativeActionAsync(String action, Runnable backgroundAction, Runnable onSuccess) {
+        if (administrativeTaskRunning) {
+            showError("Ya hay una operación administrativa en progreso. Espera a que termine.");
+            return;
+        }
+
+        administrativeTaskRunning = true;
+        setAdministrativeUiBusy(true);
+
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            private Exception failure;
+
+            @Override
+            protected Void doInBackground() {
+                try {
+                    backgroundAction.run();
+                } catch (Exception ex) {
+                    failure = ex;
+                }
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                administrativeTaskRunning = false;
+                setAdministrativeUiBusy(false);
+
+                if (failure != null) {
+                    showAdministrativeError(action, failure);
+                    refreshFromSnapshot();
+                    return;
+                }
+
+                refreshFromSnapshot();
+                if (onSuccess != null) {
+                    onSuccess.run();
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void setAdministrativeUiBusy(boolean busy) {
+        Cursor cursor = busy
+                ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR)
+                : Cursor.getDefaultCursor();
+        mainFrame.setCursor(cursor);
     }
 
     private boolean hasSimulationRun(SimulationSnapshot snapshot) {
@@ -559,7 +604,7 @@ public class GuiController {
     }
 
     private void updateActionButtonsBySystemState(boolean recoveryRequired) {
-        boolean enableGeneralActions = !recoveryRequired;
+        boolean enableGeneralActions = !recoveryRequired && !administrativeTaskRunning;
 
         // En recovery quarantine solo se permite recovery/load system/estadisticas.
         mainFrame.getBtnAdmin().setEnabled(enableGeneralActions);
