@@ -3,6 +3,7 @@ package ve.edu.unimet.so.project2.project2os.gui;
 import ve.edu.unimet.so.project2.application.*;
 import ve.edu.unimet.so.project2.coordinator.core.SimulationCoordinator;
 import ve.edu.unimet.so.project2.coordinator.snapshot.SimulationSnapshot;
+import ve.edu.unimet.so.project2.disk.DiskHeadDirection;
 import ve.edu.unimet.so.project2.scheduler.DiskSchedulingPolicy;
 
 import javax.swing.*;
@@ -269,6 +270,7 @@ public class GuiController {
         String[] options = new String[] {
                 "Resetear simulación",
                 "Cambiar cantidad de bloques",
+                "Cambiar dirección del cabezal",
                 "Cancelar"
         };
         int selection = JOptionPane.showOptionDialog(
@@ -285,6 +287,8 @@ public class GuiController {
             handleResetSimulation();
         } else if (selection == 1) {
             handleChangeBlockCount();
+        } else if (selection == 2) {
+            handleChangeHeadDirection();
         }
     }
 
@@ -346,6 +350,44 @@ public class GuiController {
                     JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
             showError("Error cambiando cantidad de bloques: " + ex.getMessage());
+        }
+    }
+
+    private void handleChangeHeadDirection() {
+        SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
+        if (snapshot == null) {
+            showError("No hay snapshot disponible.");
+            return;
+        }
+
+        DiskHeadDirection currentDirection = snapshot.getHeadDirection();
+        String[] options = {"UP", "DOWN"};
+        String currentSelection = currentDirection.toString();
+
+        String selectedOption = (String) JOptionPane.showInputDialog(
+                mainFrame,
+                "Seleccione la nueva dirección del cabezal:",
+                "Cambiar dirección del cabezal",
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                options,
+                currentSelection);
+
+        if (selectedOption == null) {
+            return;
+        }
+
+        try {
+            DiskHeadDirection newDirection = DiskHeadDirection.valueOf(selectedOption);
+            coordinator.changeHeadDirection(newDirection);
+            refreshFromSnapshot();
+            JOptionPane.showMessageDialog(
+                    mainFrame,
+                    "Dirección del cabezal cambiada a " + newDirection + ".",
+                    "Dirección actualizada",
+                    JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            showError("Error cambiando dirección del cabezal: " + ex.getMessage());
         }
     }
 
