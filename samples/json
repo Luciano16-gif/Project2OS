@@ -1,0 +1,16 @@
+{
+  "test_id": "P1-B",
+  "initial_head": 100,
+  "requests": [
+    {"pos": 20, "op": "READ"},
+    {"pos": 180, "op": "READ"},
+    {"pos": 40, "op": "UPDATE"},
+    {"pos": 10, "op": "READ"}
+  ],
+  "system_files": {
+    "10": {"name": "kernel.bin", "blocks": 4},
+    "20": {"name": "user_data.txt", "blocks": 2},
+    "40": {"name": "config.ini", "blocks": 1},
+    "180": {"name": "log_file.log", "blocks": 5}
+  }
+}

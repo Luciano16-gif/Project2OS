@@ -982,7 +982,7 @@ public final class SimulationCoordinator {
         String placeholderTargetNodeId = "SCENARIO-POS-" + intent.getStartBlock();
         LockType requiredLockType = intent.getOperationType() == IoOperationType.READ
                 ? LockType.SHARED
-                : LockType.EXCLUSIVE;
+                : (intent.getOperationType() == IoOperationType.CREATE ? null : LockType.EXCLUSIVE);
         IoRequest request = new IoRequest(
                 requestId,
                 processId,
@@ -991,7 +991,7 @@ public final class SimulationCoordinator {
                 placeholderTargetPath,
                 placeholderTargetNodeId,
                 intent.getStartBlock(),
-                0,
+                intent.getRequestedSizeInBlocks(),
                 ownerUserId,
                 arrivalOrder);
         ProcessControlBlock process = new ProcessControlBlock(

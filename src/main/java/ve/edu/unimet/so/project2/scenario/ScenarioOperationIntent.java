@@ -1,6 +1,7 @@
 package ve.edu.unimet.so.project2.scenario;
 
 import ve.edu.unimet.so.project2.application.ApplicationOperationIntent;
+import ve.edu.unimet.so.project2.application.CreateFileIntent;
 import ve.edu.unimet.so.project2.application.DeleteIntent;
 import ve.edu.unimet.so.project2.application.ReadIntent;
 import ve.edu.unimet.so.project2.application.RenameIntent;
@@ -16,8 +17,19 @@ public final class ScenarioOperationIntent implements ApplicationOperationIntent
     private final int startBlock;
     private final IoOperationType operationType;
     private final int sequence;
+    private final String createName;
+    private final Integer createBlocks;
 
     public ScenarioOperationIntent(int startBlock, IoOperationType operationType, int sequence) {
+        this(startBlock, operationType, sequence, null, null);
+    }
+
+    public ScenarioOperationIntent(
+            int startBlock,
+            IoOperationType operationType,
+            int sequence,
+            String createName,
+            Integer createBlocks) {
         if (startBlock < 0) {
             throw new IllegalArgumentException("startBlock cannot be negative");
         }
@@ -30,18 +42,27 @@ public final class ScenarioOperationIntent implements ApplicationOperationIntent
         this.startBlock = startBlock;
         this.operationType = operationType;
         this.sequence = sequence;
+        this.createName = createName;
+        this.createBlocks = createBlocks;
     }
 
     public ApplicationOperationIntent resolve(
             SimulationApplicationState applicationState,
             SimulatedDisk disk) {
-        FileNode targetFile = requireTargetFile(applicationState, disk);
         return switch (operationType) {
-            case READ -> new ReadIntent(targetFile.getPath());
-            case DELETE -> new DeleteIntent(targetFile.getPath());
-            case UPDATE -> new RenameIntent(targetFile.getPath(), buildScenarioRename(targetFile));
-            default -> throw new IllegalArgumentException(
-                "external scenarios do not support " + operationType + " requests");
+            case CREATE -> new CreateFileIntent("/", requireCreateName(), requireCreateBlocks(), false, false);
+            case READ -> {
+                FileNode targetFile = requireTargetFile(applicationState, disk);
+                yield new ReadIntent(targetFile.getPath());
+            }
+            case DELETE -> {
+                FileNode targetFile = requireTargetFile(applicationState, disk);
+                yield new DeleteIntent(targetFile.getPath());
+            }
+            case UPDATE -> {
+                FileNode targetFile = requireTargetFile(applicationState, disk);
+                yield new RenameIntent(targetFile.getPath(), buildScenarioRename(targetFile));
+            }
         };
     }
 
@@ -53,9 +74,16 @@ public final class ScenarioOperationIntent implements ApplicationOperationIntent
         return operationType;
     }
 
+    public int getRequestedSizeInBlocks() {
+        return operationType == IoOperationType.CREATE ? requireCreateBlocks() : 0;
+    }
+
     public String describeTargetPath(
             SimulationApplicationState applicationState,
             SimulatedDisk disk) {
+        if (operationType == IoOperationType.CREATE) {
+            return "/" + requireCreateName();
+        }
         FileNode targetFile = findTargetFile(applicationState, disk);
         if (targetFile != null) {
             return targetFile.getPath();
@@ -119,5 +147,19 @@ public final class ScenarioOperationIntent implements ApplicationOperationIntent
         if (disk == null) {
             throw new IllegalArgumentException("disk cannot be null");
         }
+    }
+
+    private String requireCreateName() {
+        if (createName == null || createName.isBlank()) {
+            throw new IllegalArgumentException("scenario CREATE request requires a non-blank name");
+        }
+        return createName;
+    }
+
+    private int requireCreateBlocks() {
+        if (createBlocks == null || createBlocks <= 0) {
+            throw new IllegalArgumentException("scenario CREATE request requires positive blocks");
+        }
+        return createBlocks;
     }
 }

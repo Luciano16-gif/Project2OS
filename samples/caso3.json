@@ -1,0 +1,11 @@
+{
+  "test_id": "S1-FULL-DISK",
+  "initial_head": 0,
+  "requests": [
+    {"pos": 10, "op": "CREATE", "name": "huge_file.dat", "blocks": 480}
+  ],
+  "system_files": {
+    "150": {"name": "existing.bin", "blocks": 50}
+  }
+}
+

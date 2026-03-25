@@ -2136,6 +2136,29 @@ class SimulationCoordinatorTest {
     }
 
     @Test
+    void loadScenarioUsesDirectionProvidedByJson() throws IOException {
+        coordinator = createCoordinator(new LockTable(), new JournalManager());
+        coordinator.start();
+
+        Path scenarioPath = Files.createTempFile("project2os-scenario-direction", ".json");
+        Files.writeString(scenarioPath, """
+                {
+                  "test_id": "SCN-DIR-1",
+                  "initial_head": 4,
+                  "direction": "DOWN",
+                  "system_files": {},
+                  "requests": []
+                }
+                """);
+
+        coordinator.loadScenario(scenarioPath);
+
+        SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
+        assertEquals(DiskHeadDirection.DOWN, snapshot.getHeadDirection());
+        assertEquals(4, snapshot.getHeadBlock());
+    }
+
+    @Test
     void loadScenarioResolvesRequestsFromNonLeadingFileBlocks() throws IOException {
         coordinator = createCoordinator(new LockTable(), new JournalManager());
         coordinator.start();

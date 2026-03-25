@@ -49,7 +49,8 @@ public final class ScenarioLoader {
         }
 
         validateDocument(document, totalBlocks);
-        SimulatedDisk disk = new SimulatedDisk(totalBlocks, document.initialHead(), headDirection);
+        DiskHeadDirection scenarioDirection = resolveScenarioDirection(document.direction(), headDirection);
+        SimulatedDisk disk = new SimulatedDisk(totalBlocks, document.initialHead(), scenarioDirection);
         SimulationApplicationState applicationState = createScenarioApplicationState();
         loadSystemFiles(document.systemFiles(), applicationState, disk);
         validateRequestTargets(document.requests(), disk);
@@ -70,11 +71,25 @@ public final class ScenarioLoader {
         if (document.systemFiles() == null) {
             throw new IllegalArgumentException("scenario system_files cannot be null");
         }
+        if (document.direction() != null) {
+            parseDirection(document.direction());
+        }
         for (ExternalScenarioDocument.RequestData request : document.requests()) {
             if (request == null || request.pos() == null || request.pos() < 0 || request.pos() >= totalBlocks) {
                 throw new IllegalArgumentException("scenario request pos is out of range");
             }
-            parseOperation(request.op());
+            IoOperationType operationType = parseOperation(request.op());
+            if (operationType == IoOperationType.CREATE) {
+                if (request.name() == null || request.name().isBlank()) {
+                    throw new IllegalArgumentException("scenario CREATE request requires a non-blank name");
+                }
+                if (request.name().contains("/") || ".".equals(request.name()) || "..".equals(request.name())) {
+                    throw new IllegalArgumentException("scenario CREATE request name is invalid: " + request.name());
+                }
+                if (request.blocks() == null || request.blocks() <= 0) {
+                    throw new IllegalArgumentException("scenario CREATE request requires positive blocks");
+                }
+            }
         }
         for (Map.Entry<String, ExternalScenarioDocument.SystemFileData> entry : document.systemFiles().entrySet()) {
             int startBlock = parseStartBlock(entry.getKey(), totalBlocks);
@@ -155,13 +170,18 @@ public final class ScenarioLoader {
             intents[i] = new ScenarioOperationIntent(
                     requests[i].pos(),
                     parseOperation(requests[i].op()),
-                    i + 1);
+                    i + 1,
+                    requests[i].name(),
+                    requests[i].blocks());
         }
         return intents;
     }
 
     private void validateRequestTargets(ExternalScenarioDocument.RequestData[] requests, SimulatedDisk disk) {
         for (ExternalScenarioDocument.RequestData request : requests) {
+            if (parseOperation(request.op()) == IoOperationType.CREATE) {
+                continue;
+            }
             DiskBlock targetBlock = disk.getBlock(request.pos());
             if (targetBlock.isFree() || targetBlock.getOwnerFileId() == null || targetBlock.getOwnerFileId().isBlank()) {
                 throw new IllegalArgumentException(
@@ -243,7 +263,24 @@ public final class ScenarioLoader {
             case "READ", "R" -> IoOperationType.READ;
             case "UPDATE", "U" -> IoOperationType.UPDATE;
             case "DELETE", "D" -> IoOperationType.DELETE;
+            case "CREATE", "C" -> IoOperationType.CREATE;
             default -> throw new IllegalArgumentException("unsupported scenario operation: " + rawOperation);
+        };
+    }
+
+    private DiskHeadDirection resolveScenarioDirection(String rawDirection, DiskHeadDirection fallback) {
+        if (rawDirection == null || rawDirection.isBlank()) {
+            return fallback;
+        }
+        return parseDirection(rawDirection);
+    }
+
+    private DiskHeadDirection parseDirection(String rawDirection) {
+        String normalized = rawDirection.trim().toUpperCase();
+        return switch (normalized) {
+            case "UP" -> DiskHeadDirection.UP;
+            case "DOWN" -> DiskHeadDirection.DOWN;
+            default -> throw new IllegalArgumentException("unsupported scenario direction: " + rawDirection);
         };
     }
 }

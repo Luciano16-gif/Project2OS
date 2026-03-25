@@ -1,0 +1,10 @@
+{
+  "test_id": "J2-DELETE-CRASH",
+  "initial_head": 20,
+  "requests": [
+    {"pos": 20, "op": "DELETE"}
+  ],
+  "system_files": {
+    "20": {"name": "important.doc", "blocks": 10}
+  }
+}

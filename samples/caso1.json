@@ -1,0 +1,8 @@
+{
+  "test_id": "J1-CRASH",
+  "initial_head": 50,
+  "requests": [
+    {"pos": 100, "op": "CREATE", "name": "critical.bin", "blocks": 50}
+  ],
+  "system_files": {}
+}

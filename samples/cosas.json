@@ -1,0 +1,17 @@
+{
+  "test_id": "P2-B",
+  "initial_head": 50,
+  "requests": [
+    {"pos": 10, "op": "READ"},
+    {"pos": 60, "op": "READ"},
+    {"pos": 5, "op": "UPDATE"},
+    {"pos": 200, "op": "READ"}
+  ],
+  "system_files": {
+    "5": {"name": "temp.tmp", "blocks": 1},
+    "10": {"name": "data1.dat", "blocks": 2},
+    "60": {"name": "data2.dat", "blocks": 2},
+    "200": {"name": "backup.zip", "blocks": 10}
+  }
+}
+

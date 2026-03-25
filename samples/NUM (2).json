@@ -1,0 +1,15 @@
+{
+  "test_id": "P4-B",
+  "initial_head": 180,
+  "direction": "UP",
+  "requests": [
+    {"pos": 190, "op": "READ"},
+    {"pos": 10, "op": "READ"},
+    {"pos": 50, "op": "UPDATE"}
+  ],
+  "system_files": {
+    "10": {"name": "start.exe", "blocks": 2},
+    "50": {"name": "mid.exe", "blocks": 2},
+    "190": {"name": "end.exe", "blocks": 2}
+  }
+}

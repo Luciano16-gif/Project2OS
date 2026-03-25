@@ -1,0 +1,16 @@
+{
+  "test_id": "P3-B",
+  "initial_head": 150,
+  "direction": "UP",
+  "requests": [
+    {"pos": 180, "op": "READ"},
+    {"pos": 20, "op": "READ"},
+    {"pos": 195, "op": "UPDATE"}
+  ],
+  "system_files": {
+    "20": {"name": "notes.txt", "blocks": 1},
+    "180": {"name": "music.mp3", "blocks": 15},
+    "195": {"name": "hidden.sys", "blocks": 1}
+  }
+}
+
