@@ -74,14 +74,15 @@ public final class SimulationSnapshotFactory {
     private SimulationSnapshot.LockSummary[] buildLockSummaries(LockTable lockTable) {
         String[] trackedFileIds = lockTable.getTrackedFileIdsSnapshot();
         SimulationSnapshot.LockSummary[] summaries = new SimulationSnapshot.LockSummary[trackedFileIds.length];
-        for (String fileId : trackedFileIds) {
+        for (int i = 0; i < trackedFileIds.length; i++) {
+            String fileId = trackedFileIds[i];
             SimulationSnapshot.ActiveLockSummary[] activeLocks = buildActiveLockSummaries(
                     lockTable.getActiveLocksSnapshot(fileId));
             SimulationSnapshot.WaitingLockSummary[] waitingEntries = buildWaitingLockSummaries(
                     lockTable.getWaitingQueueSnapshot(fileId));
             SimulationSnapshot.WaitingLockSummary[] pendingGrantEntries = buildWaitingLockSummaries(
                     lockTable.getPendingGrantSnapshot(fileId));
-            summaries[findTargetIndex(summaries)] = new SimulationSnapshot.LockSummary(
+            summaries[i] = new SimulationSnapshot.LockSummary(
                     fileId,
                     activeLocks,
                     waitingEntries,
@@ -91,15 +92,6 @@ public final class SimulationSnapshotFactory {
                     lockTable.getPendingGrantCount(fileId));
         }
         return summaries;
-    }
-
-    private int findTargetIndex(SimulationSnapshot.LockSummary[] summaries) {
-        for (int i = 0; i < summaries.length; i++) {
-            if (summaries[i] == null) {
-                return i;
-            }
-        }
-        throw new IllegalStateException("lock summary array is unexpectedly full");
     }
 
     private SimulationSnapshot.ActiveLockSummary[] buildActiveLockSummaries(Object[] source) {

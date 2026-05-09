@@ -1,269 +1,200 @@
 package ve.edu.unimet.so.project2.project2os.gui;
 
-import ve.edu.unimet.so.project2.application.*;
-import ve.edu.unimet.so.project2.coordinator.core.SimulationCoordinator;
-import ve.edu.unimet.so.project2.coordinator.snapshot.SimulationSnapshot;
-import ve.edu.unimet.so.project2.disk.DiskHeadDirection;
-import ve.edu.unimet.so.project2.scheduler.DiskSchedulingPolicy;
-
-import javax.swing.*;
-import javax.swing.filechooser.FileNameExtensionFilter;
+import java.awt.Component;
 import java.awt.Cursor;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.function.BiFunction;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.function.ToIntFunction;
+import javax.swing.AbstractButton;
+import javax.swing.JFileChooser;
+import javax.swing.JOptionPane;
+import javax.swing.SwingWorker;
+import javax.swing.Timer;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import ve.edu.unimet.so.project2.application.ApplicationOperationIntent;
+import ve.edu.unimet.so.project2.application.CreateDirectoryIntent;
+import ve.edu.unimet.so.project2.application.CreateFileIntent;
+import ve.edu.unimet.so.project2.application.DeleteIntent;
+import ve.edu.unimet.so.project2.application.ReadIntent;
+import ve.edu.unimet.so.project2.application.RenameIntent;
+import ve.edu.unimet.so.project2.coordinator.core.SimulationCoordinator;
+import ve.edu.unimet.so.project2.coordinator.snapshot.SimulationSnapshot;
+import ve.edu.unimet.so.project2.disk.DiskHeadDirection;
+import ve.edu.unimet.so.project2.filesystem.FsNodeType;
+import ve.edu.unimet.so.project2.process.IoOperationType;
+import ve.edu.unimet.so.project2.process.ResultStatus;
+import ve.edu.unimet.so.project2.scheduler.DiskSchedulingPolicy;
 
 public class GuiController {
+
+    private static final String ARMED_TOOLTIP = "El proximo commit journaled disparara un fallo simulado";
+    private static final int REFRESH_DELAY_MILLIS = 150;
 
     private final SimulationCoordinator coordinator;
     private final MainFrame mainFrame;
     private final Timer refreshTimer;
-    private boolean recoveryPopupShown;
-    private final Set<String> notifiedIntentFailures;
-    private volatile boolean administrativeTaskRunning;
+    private final Set<String> notifiedIntentFailures = new HashSet<>();
 
-    private static final String ARMED_TOOLTIP = "El próximo commit journaled disparará un fallo simulado";
+    private boolean recoveryPopupShown;
+    private volatile boolean administrativeTaskRunning;
 
     public GuiController(SimulationCoordinator coordinator, MainFrame mainFrame) {
         this.coordinator = coordinator;
         this.mainFrame = mainFrame;
-        this.recoveryPopupShown = false;
-        this.notifiedIntentFailures = new HashSet<>();
-        this.administrativeTaskRunning = false;
-
-        // GUI policy: start in paused/manual mode.
         runCoordinatorAction("Error configurando modo inicial", () -> coordinator.setStepModeEnabled(true));
-
-        // Refresh at 150ms intervals
-        this.refreshTimer = new Timer(150, e -> refreshFromSnapshot());
-
+        this.refreshTimer = new Timer(REFRESH_DELAY_MILLIS, e -> refreshFromSnapshot());
         setupListeners();
         refreshTimer.start();
         updatePlaybackLabel();
     }
 
     private void setupListeners() {
-        mainFrame.getBtnAdmin().addActionListener(e -> runCoordinatorAction("Error cambiando a sesión Admin", () -> {
-            coordinator.switchSession("admin");
-            refreshFromSnapshot();
-        }));
-        mainFrame.getBtnUser().addActionListener(e -> runCoordinatorAction("Error cambiando a sesión Usuario", () -> {
-            coordinator.switchSession("user-1");
-            refreshFromSnapshot();
-        }));
+        bindSessionButton(mainFrame.btnAdmin, "admin", "Error cambiando a sesion Admin");
+        bindSessionButton(mainFrame.btnUser, "user-1", "Error cambiando a sesion Usuario");
 
-        mainFrame.getBtnPolicyChange().addActionListener(e -> {
-            String policyStr = (String) mainFrame.getComboPolicy().getSelectedItem();
-            if (policyStr != null) {
-                runCoordinatorAction("Error cambiando política",
-                        () -> coordinator.changePolicy(DiskSchedulingPolicy.valueOf(policyStr)));
+        mainFrame.btnPolicyChange.addActionListener(e -> {
+            String policy = (String) mainFrame.comboPolicy.getSelectedItem();
+            if (policy != null) {
+                runCoordinatorAction(
+                        "Error cambiando politica",
+                        () -> coordinator.changePolicy(DiskSchedulingPolicy.valueOf(policy)));
             }
         });
 
-        mainFrame.getBtnSaveSystem().addActionListener(e -> handleSaveSystem());
-        mainFrame.getBtnLoadSystem().addActionListener(e -> handleLoadSystem());
-        mainFrame.getBtnLoadScenario().addActionListener(e -> handleLoadScenario());
-        mainFrame.getBtnAdvanced().addActionListener(e -> handleAdvancedOptions());
+        mainFrame.btnSaveSystem.addActionListener(e -> handleSaveSystem());
+        mainFrame.btnLoadSystem.addActionListener(e -> handleLoadSystem());
+        mainFrame.btnLoadScenario.addActionListener(e -> handleLoadScenario());
+        mainFrame.btnAdvanced.addActionListener(e -> handleAdvancedOptions());
+        mainFrame.btnStats.addActionListener(e -> showStatisticsDialog());
 
-        mainFrame.getBtnStats().addActionListener(e -> showStatisticsDialog());
+        bindPlaybackButton(mainFrame.btnPlay, "Error reanudando simulacion", () -> coordinator.setStepModeEnabled(false));
+        bindPlaybackButton(mainFrame.btnPause, "Error pausando simulacion", () -> coordinator.setStepModeEnabled(true));
+        bindPlaybackButton(mainFrame.btnStep, "Error avanzando simulacion por paso", coordinator::stepSimulationOnce);
 
-        mainFrame.getBtnPlay().addActionListener(e -> {
-            runCoordinatorAction("Error reanudando simulación", () -> coordinator.setStepModeEnabled(false));
-            if (!refreshTimer.isRunning()) {
-                refreshTimer.start();
-            }
-            updatePlaybackLabel();
-        });
-
-        mainFrame.getBtnPause().addActionListener(e -> {
-            runCoordinatorAction("Error pausando simulación", () -> coordinator.setStepModeEnabled(true));
-            if (!refreshTimer.isRunning()) {
-                refreshTimer.start();
-            }
-            updatePlaybackLabel();
-        });
-
-        mainFrame.getBtnStep().addActionListener(e -> {
-            runCoordinatorAction("Error avanzando simulación por paso", () -> coordinator.stepSimulationOnce());
-            if (!refreshTimer.isRunning()) {
-                refreshTimer.start();
-            }
-            updatePlaybackLabel();
-        });
-
-        mainFrame.getComboPlaybackSpeed().addActionListener(e -> {
-            String selected = (String) mainFrame.getComboPlaybackSpeed().getSelectedItem();
-            int delay = parseDelayMillis(selected, 0);
-            runCoordinatorAction("Error actualizando velocidad de ejecución",
-                    () -> coordinator.changeExecutionDelay(delay));
-            refreshTimer.setDelay(150);
-            refreshTimer.setInitialDelay(150);
+        mainFrame.comboPlaybackSpeed.addActionListener(e -> {
+            int delay = parseDelayMillis((String) mainFrame.comboPlaybackSpeed.getSelectedItem(), 0);
+            runCoordinatorAction("Error actualizando velocidad de ejecucion", () -> coordinator.changeExecutionDelay(delay));
+            refreshTimer.setDelay(REFRESH_DELAY_MILLIS);
+            refreshTimer.setInitialDelay(REFRESH_DELAY_MILLIS);
             updatePlaybackLabel(delay);
         });
 
-        mainFrame.getBtnCreateFile().addActionListener(e -> {
-            String parent = mainFrame.getFileSystemTreePanel().getSelectedNodePath();
-            if (parent == null) {
-                showError("Seleccione un directorio destino en el árbol.");
-                return;
-            }
-            if (!isDirectoryPath(parent)) {
-                showError("La ruta seleccionada no es un directorio. Seleccione una carpeta para crear el archivo.");
-                return;
-            }
-            String name = JOptionPane.showInputDialog(mainFrame, "Nombre del archivo:");
-            if (name == null)
-                return;
-            if (name.isBlank()) {
-                showError("El nombre del archivo no puede estar vacío.");
-                return;
-            }
-            String sizeStr = JOptionPane.showInputDialog(mainFrame, "Tamaño en bloques:");
-            if (sizeStr == null)
-                return;
-            if (sizeStr.isBlank()) {
-                showError("El tamaño en bloques no puede estar vacío.");
-                return;
-            }
+        mainFrame.btnCreateFile.addActionListener(e -> handleCreateFile());
+        mainFrame.btnCreateDir.addActionListener(e -> handleCreateDirectory());
+        mainFrame.btnRead.addActionListener(e -> handleSimpleIntent(
+                "Seleccione un archivo en el arbol.",
+                "leer",
+                ReadIntent::new));
+        mainFrame.btnRename.addActionListener(e -> handleRename());
+        mainFrame.btnDelete.addActionListener(e -> handleDelete());
 
-            try {
-                int size = parseRequiredPositiveInt(sizeStr, "La cantidad de bloques debe ser un número entero mayor que 0.");
-                int freeBlocks = countFreeBlocks();
-                if (size > freeBlocks) {
-                    showError("No hay bloques suficientes para crear el archivo.\n"
-                            + "Solicitados: " + size + " | Disponibles: " + freeBlocks);
-                    return;
-                }
-                coordinator.submitIntent(new CreateFileIntent(parent, name, size, false, false));
-            } catch (IllegalArgumentException ex) {
-                showError(ex.getMessage());
-            } catch (Exception ex) {
-                showOperationError("crear archivo", ex);
-            }
-        });
-
-        mainFrame.getBtnCreateDir().addActionListener(e -> {
-            String parent = mainFrame.getFileSystemTreePanel().getSelectedNodePath();
-            if (parent == null) {
-                showError("Seleccione un directorio destino en el árbol.");
-                return;
-            }
-            if (!isDirectoryPath(parent)) {
-                showError("La ruta seleccionada no es un directorio. Seleccione una carpeta para crear el directorio.");
-                return;
-            }
-            String name = JOptionPane.showInputDialog(mainFrame, "Nombre del directorio:");
-            if (name == null)
-                return;
-            if (name.isBlank()) {
-                showError("El nombre del directorio no puede estar vacío.");
-                return;
-            }
-            try {
-                coordinator.submitIntent(new CreateDirectoryIntent(parent, name, false));
-            } catch (Exception ex) {
-                showOperationError("crear directorio", ex);
-            }
-        });
-
-        mainFrame.getBtnRead().addActionListener(e -> {
-            String target = mainFrame.getFileSystemTreePanel().getSelectedNodePath();
-            if (target == null) {
-                showError("Seleccione un archivo en el árbol.");
-                return;
-            }
-            try {
-                coordinator.submitIntent(new ReadIntent(target));
-            } catch (Exception ex) {
-                showOperationError("leer", ex);
-            }
-        });
-
-        mainFrame.getBtnRename().addActionListener(e -> {
-            String target = mainFrame.getFileSystemTreePanel().getSelectedNodePath();
-            if (target == null) {
-                showError("Seleccione un nodo en el árbol.");
-                return;
-            }
-            String name = JOptionPane.showInputDialog(mainFrame, "Nuevo nombre:");
-            if (name == null)
-                return;
-            if (name.isBlank()) {
-                showError("El nuevo nombre no puede estar vacío.");
-                return;
-            }
-            try {
-                coordinator.submitIntent(new RenameIntent(target, name));
-            } catch (Exception ex) {
-                showOperationError("renombrar", ex);
-            }
-        });
-
-        mainFrame.getBtnDelete().addActionListener(e -> {
-            String target = mainFrame.getFileSystemTreePanel().getSelectedNodePath();
-            if (target == null) {
-                showError("Seleccione un nodo en el árbol.");
-                return;
-            }
-            int confirm = JOptionPane.showConfirmDialog(mainFrame, "¿Seguro que desea eliminar " + target + "?",
-                    "Confirmar Eliminación", JOptionPane.YES_NO_OPTION);
-            if (confirm == JOptionPane.YES_OPTION) {
-                try {
-                    coordinator.submitIntent(new DeleteIntent(target));
-                } catch (Exception ex) {
-                    showOperationError("eliminar", ex);
-                }
-            }
-        });
-
-        mainFrame.getBtnSimularFallo().addActionListener(e -> {
-            runCoordinatorAction("Error armando fallo simulado", () -> {
-                coordinator.armSimulatedFailure();
-                refreshFromSnapshot();
-            });
-        });
-
-        mainFrame.getBtnRecovery().addActionListener(e -> runAdministrativeActionAsync(
+        mainFrame.btnSimularFallo.addActionListener(e -> runCoordinatorAction("Error armando fallo simulado", () -> {
+            coordinator.armSimulatedFailure();
+            refreshFromSnapshot();
+        }));
+        mainFrame.btnRecovery.addActionListener(e -> runAdministrativeActionAsync(
                 "ejecutar recovery",
                 coordinator::recoverPendingJournalEntries,
-                () -> JOptionPane.showMessageDialog(mainFrame, "Recovery completado.", "Recovery", JOptionPane.INFORMATION_MESSAGE)));
+                () -> showInfo("Recovery completado.", "Recovery")));
+    }
+
+    private void handleCreateFile() {
+        String parent = requireSelectedDirectoryPath(
+                "Seleccione un directorio destino en el arbol.",
+                "La ruta seleccionada no es un directorio. Seleccione una carpeta para crear el archivo.");
+        if (parent == null) {
+            return;
+        }
+
+        String name = promptNonBlank("Nombre del archivo:", "El nombre del archivo no puede estar vacio.");
+        String sizeRaw = promptNonBlank("Tamano en bloques:", "El tamano en bloques no puede estar vacio.");
+        if (name == null || sizeRaw == null) {
+            return;
+        }
+
+        try {
+            int size = parseRequiredPositiveInt(sizeRaw, "La cantidad de bloques debe ser un numero entero mayor que 0.");
+            int freeBlocks = countFreeBlocks();
+            if (size > freeBlocks) {
+                showError("No hay bloques suficientes para crear el archivo.\nSolicitados: " + size + " | Disponibles: " + freeBlocks);
+                return;
+            }
+            submitIntent("crear archivo", new CreateFileIntent(parent, name, size, false, false));
+        } catch (IllegalArgumentException exception) {
+            showError(exception.getMessage());
+        }
+    }
+
+    private void handleCreateDirectory() {
+        String parent = requireSelectedDirectoryPath(
+                "Seleccione un directorio destino en el arbol.",
+                "La ruta seleccionada no es un directorio. Seleccione una carpeta para crear el directorio.");
+        if (parent == null) {
+            return;
+        }
+
+        String name = promptNonBlank("Nombre del directorio:", "El nombre del directorio no puede estar vacio.");
+        if (name != null) {
+            submitIntent("crear directorio", new CreateDirectoryIntent(parent, name, false));
+        }
+    }
+
+    private void handleRename() {
+        String target = requireSelectedNodePath("Seleccione un nodo en el arbol.");
+        String name = promptNonBlank("Nuevo nombre:", "El nuevo nombre no puede estar vacio.");
+        if (target != null && name != null) {
+            submitIntent("renombrar", new RenameIntent(target, name));
+        }
+    }
+
+    private void handleDelete() {
+        String target = requireSelectedNodePath("Seleccione un nodo en el arbol.");
+        if (target == null) {
+            return;
+        }
+        int confirm = JOptionPane.showConfirmDialog(
+                mainFrame,
+                "Seguro que desea eliminar " + target + "?",
+                "Confirmar Eliminacion",
+                JOptionPane.YES_NO_OPTION);
+        if (confirm == JOptionPane.YES_OPTION) {
+            submitIntent("eliminar", new DeleteIntent(target));
+        }
+    }
+
+    private void handleSimpleIntent(String missingMessage, String operation, Function<String, ApplicationOperationIntent> factory) {
+        String target = requireSelectedNodePath(missingMessage);
+        if (target != null) {
+            submitIntent(operation, factory.apply(target));
+        }
     }
 
     private void handleSaveSystem() {
-        if (administrativeTaskRunning) {
-            showError("Ya hay una operación administrativa en progreso. Espera a que termine.");
-            return;
+        Path selected = chooseAdministrativePath(() -> chooseFileToSave("Guardar estado del sistema", "system-state.json"));
+        if (selected != null) {
+            runAdministrativeActionAsync(
+                    "guardar el sistema",
+                    () -> coordinator.saveSystem(selected),
+                    () -> showInfo("Sistema guardado en:\n" + selected, "Guardado"));
         }
-        Path selected = chooseFileToSave("Guardar estado del sistema", "system-state.json");
-        if (selected == null) {
-            return;
-        }
-        runAdministrativeActionAsync(
-                "guardar el sistema",
-                () -> coordinator.saveSystem(selected),
-                () -> JOptionPane.showMessageDialog(mainFrame, "Sistema guardado en:\n" + selected, "Guardado",
-                        JOptionPane.INFORMATION_MESSAGE));
     }
 
     private void handleLoadSystem() {
-        if (administrativeTaskRunning) {
-            showError("Ya hay una operación administrativa en progreso. Espera a que termine.");
-            return;
+        Path selected = chooseAdministrativePath(() -> chooseFileToOpen("Cargar estado del sistema"));
+        if (selected != null) {
+            runAdministrativeActionAsync(
+                    "cargar el sistema",
+                    () -> coordinator.loadSystem(selected),
+                    () -> showInfo("Sistema cargado desde:\n" + selected, "Carga completada"));
         }
-        Path selected = chooseFileToOpen("Cargar estado del sistema");
-        if (selected == null) {
-            return;
-        }
-        runAdministrativeActionAsync(
-                "cargar el sistema",
-                () -> coordinator.loadSystem(selected),
-                () -> JOptionPane.showMessageDialog(mainFrame, "Sistema cargado desde:\n" + selected, "Carga completada",
-                        JOptionPane.INFORMATION_MESSAGE));
     }
 
     private void handleLoadScenario() {
-        if (administrativeTaskRunning) {
-            showError("Ya hay una operación administrativa en progreso. Espera a que termine.");
+        if (!ensureAdministrativeSlot()) {
             return;
         }
         SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
@@ -271,77 +202,64 @@ public class GuiController {
             showError(buildBusyScenarioMessage(snapshot));
             return;
         }
-
-        Path selected = chooseFileToOpen("Cargar escenario JSON");
-        if (selected == null) {
-            return;
+        Path selected = chooseAdministrativePath(() -> chooseFileToOpen("Cargar escenario JSON"));
+        if (selected != null) {
+            runAdministrativeActionAsync(
+                    "cargar el escenario",
+                    () -> coordinator.loadScenario(selected),
+                    () -> showInfo("Escenario cargado desde:\n" + selected, "Escenario cargado"));
         }
-        runAdministrativeActionAsync(
-                "cargar el escenario",
-                () -> coordinator.loadScenario(selected),
-                () -> JOptionPane.showMessageDialog(mainFrame, "Escenario cargado desde:\n" + selected, "Escenario cargado",
-                        JOptionPane.INFORMATION_MESSAGE));
     }
 
     private void handleAdvancedOptions() {
-        String[] options = new String[] {
-                "Resetear simulación",
-                "Cambiar cantidad de bloques",
-                "Cambiar dirección del cabezal",
-                "Cancelar"
+        String[] options = {
+            "Resetear simulacion",
+            "Cambiar cantidad de bloques",
+            "Cambiar direccion del cabezal",
+            "Cancelar"
         };
         int selection = JOptionPane.showOptionDialog(
                 mainFrame,
-                "Seleccione una acción avanzada",
+                "Seleccione una accion avanzada",
                 "Opciones Avanzadas",
                 JOptionPane.DEFAULT_OPTION,
                 JOptionPane.PLAIN_MESSAGE,
                 null,
                 options,
                 options[0]);
-
-        if (selection == 0) {
-            handleResetSimulation();
-        } else if (selection == 1) {
-            handleChangeBlockCount();
-        } else if (selection == 2) {
-            handleChangeHeadDirection();
+        switch (selection) {
+            case 0 -> handleResetSimulation();
+            case 1 -> handleChangeBlockCount();
+            case 2 -> handleChangeHeadDirection();
+            default -> { }
         }
     }
 
     private void handleResetSimulation() {
         int confirm = JOptionPane.showConfirmDialog(
                 mainFrame,
-                "Se reseteará la simulación al estado inicial.\n¿Desea continuar?",
+                "Se reseteara la simulacion al estado inicial.\nDesea continuar?",
                 "Confirmar Reset",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
-        if (confirm != JOptionPane.YES_OPTION) {
-            return;
+        if (confirm == JOptionPane.YES_OPTION) {
+            runAdministrativeActionAsync(
+                    "resetear la simulacion",
+                    coordinator::resetSimulation,
+                    () -> showInfo("La simulacion fue reseteada correctamente.", "Reset completado"));
         }
-
-        runAdministrativeActionAsync(
-                "resetear la simulación",
-                coordinator::resetSimulation,
-                () -> JOptionPane.showMessageDialog(
-                        mainFrame,
-                        "La simulación fue reseteada correctamente.",
-                        "Reset completado",
-                        JOptionPane.INFORMATION_MESSAGE));
     }
 
     private void handleChangeBlockCount() {
         SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
         if (hasSimulationRun(snapshot)) {
-            showError("Solo puedes cambiar la cantidad de bloques si la simulación no ha corrido nada.\n"
-                    + "Esto aplica al inicio o justo después de un reset.");
+            showError("Solo puedes cambiar la cantidad de bloques si la simulacion no ha corrido nada.\nEsto aplica al inicio o justo despues de un reset.");
             return;
         }
 
         Integer[] options = {50, 100, 150, 200, 300, 400, 500};
-        int currentBlocks = snapshot != null ? snapshot.getDiskBlocksSnapshot().length : 100;
-
-        Integer selectedOption = (Integer) JOptionPane.showInputDialog(
+        int currentBlocks = snapshot == null ? 100 : snapshot.getDiskBlocksSnapshot().length;
+        Integer selected = (Integer) JOptionPane.showInputDialog(
                 mainFrame,
                 "Seleccione la nueva cantidad de bloques:",
                 "Cambiar cantidad de bloques",
@@ -349,19 +267,12 @@ public class GuiController {
                 null,
                 options,
                 currentBlocks > 0 ? currentBlocks : 100);
-
-        if (selectedOption == null) {
-            return;
+        if (selected != null) {
+            runAdministrativeActionAsync(
+                    "cambiar la cantidad de bloques",
+                    () -> coordinator.resetSimulation(selected),
+                    () -> showInfo("Cantidad de bloques actualizada a " + selected + ".", "Bloques actualizados"));
         }
-
-        runAdministrativeActionAsync(
-                "cambiar la cantidad de bloques",
-                () -> coordinator.resetSimulation(selectedOption),
-                () -> JOptionPane.showMessageDialog(
-                        mainFrame,
-                        "Cantidad de bloques actualizada a " + selectedOption + ".",
-                        "Bloques actualizados",
-                        JOptionPane.INFORMATION_MESSAGE));
     }
 
     private void handleChangeHeadDirection() {
@@ -371,56 +282,68 @@ public class GuiController {
             return;
         }
 
-        DiskHeadDirection currentDirection = snapshot.getHeadDirection();
-        String[] options = {"UP", "DOWN"};
-        String currentSelection = currentDirection.toString();
-
-        String selectedOption = (String) JOptionPane.showInputDialog(
+        String selected = (String) JOptionPane.showInputDialog(
                 mainFrame,
-                "Seleccione la nueva dirección del cabezal:",
-                "Cambiar dirección del cabezal",
+                "Seleccione la nueva direccion del cabezal:",
+                "Cambiar direccion del cabezal",
                 JOptionPane.QUESTION_MESSAGE,
                 null,
-                options,
-                currentSelection);
-
-        if (selectedOption == null) {
+                new String[] {"UP", "DOWN"},
+                snapshot.getHeadDirection().toString());
+        if (selected == null) {
             return;
         }
 
         try {
-            DiskHeadDirection newDirection = DiskHeadDirection.valueOf(selectedOption);
+            DiskHeadDirection direction = DiskHeadDirection.valueOf(selected);
             runAdministrativeActionAsync(
-                    "cambiar la dirección del cabezal",
-                    () -> coordinator.changeHeadDirection(newDirection),
-                    () -> JOptionPane.showMessageDialog(
-                            mainFrame,
-                            "Dirección del cabezal cambiada a " + newDirection + ".",
-                            "Dirección actualizada",
-                            JOptionPane.INFORMATION_MESSAGE));
-        } catch (Exception ex) {
-            showAdministrativeError("cambiar la dirección del cabezal", ex);
+                    "cambiar la direccion del cabezal",
+                    () -> coordinator.changeHeadDirection(direction),
+                    () -> showInfo("Direccion del cabezal cambiada a " + direction + ".", "Direccion actualizada"));
+        } catch (Exception exception) {
+            showAdministrativeError("cambiar la direccion del cabezal", exception);
         }
     }
 
+    private void bindSessionButton(AbstractButton button, String userId, String errorPrefix) {
+        button.addActionListener(e -> runCoordinatorAction(errorPrefix, () -> {
+            coordinator.switchSession(userId);
+            refreshFromSnapshot();
+        }));
+    }
+
+    private void bindPlaybackButton(AbstractButton button, String errorPrefix, Runnable action) {
+        button.addActionListener(e -> {
+            runCoordinatorAction(errorPrefix, action);
+            ensureRefreshTimerRunning();
+            updatePlaybackLabel();
+        });
+    }
+
+    private boolean ensureAdministrativeSlot() {
+        if (!administrativeTaskRunning) {
+            return true;
+        }
+        showError("Ya hay una operacion administrativa en progreso. Espera a que termine.");
+        return false;
+    }
+
     private void runAdministrativeActionAsync(String action, Runnable backgroundAction, Runnable onSuccess) {
-        if (administrativeTaskRunning) {
-            showError("Ya hay una operación administrativa en progreso. Espera a que termine.");
+        if (!ensureAdministrativeSlot()) {
             return;
         }
 
         administrativeTaskRunning = true;
         setAdministrativeUiBusy(true);
-
-        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+        new SwingWorker<Void, Void>() {
             private Exception failure;
 
             @Override
             protected Void doInBackground() {
                 try {
                     backgroundAction.run();
-                } catch (Exception ex) {
-                    failure = ex;
+                } catch (Exception exception) {
+                    failure = exception;
                 }
                 return null;
             }
@@ -429,62 +352,99 @@ public class GuiController {
             protected void done() {
                 administrativeTaskRunning = false;
                 setAdministrativeUiBusy(false);
-
+                refreshFromSnapshot();
                 if (failure != null) {
                     showAdministrativeError(action, failure);
-                    refreshFromSnapshot();
                     return;
                 }
-
-                refreshFromSnapshot();
                 if (onSuccess != null) {
                     onSuccess.run();
                 }
             }
-        };
-        worker.execute();
+        }.execute();
+    }
+
+    private void ensureRefreshTimerRunning() {
+        if (!refreshTimer.isRunning()) {
+            refreshTimer.start();
+        }
     }
 
     private void setAdministrativeUiBusy(boolean busy) {
-        Cursor cursor = busy
-                ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR)
-                : Cursor.getDefaultCursor();
-        mainFrame.setCursor(cursor);
+        mainFrame.setCursor(busy ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR) : Cursor.getDefaultCursor());
+    }
+
+    private void submitIntent(String operation, ApplicationOperationIntent intent) {
+        try {
+            coordinator.submitIntent(intent);
+        } catch (Exception exception) {
+            showOperationError(operation, exception);
+        }
+    }
+
+    private String requireSelectedNodePath(String missingMessage) {
+        String selected = mainFrame.fileSystemTreePanel.getSelectedNodePath();
+        if (selected == null) {
+            showError(missingMessage);
+        }
+        return selected;
+    }
+
+    private String requireSelectedDirectoryPath(String missingMessage, String invalidMessage) {
+        String selected = requireSelectedNodePath(missingMessage);
+        if (selected == null) {
+            return null;
+        }
+        if (isDirectoryPath(selected)) {
+            return selected;
+        }
+        showError(invalidMessage);
+        return null;
+    }
+
+    private String promptNonBlank(String prompt, String emptyMessage) {
+        String value = JOptionPane.showInputDialog(mainFrame, prompt);
+        if (value == null) {
+            return null;
+        }
+        if (value.isBlank()) {
+            showError(emptyMessage);
+            return null;
+        }
+        return value;
+    }
+
+    private Path chooseAdministrativePath(Supplier<Path> chooser) {
+        return ensureAdministrativeSlot() ? chooser.get() : null;
     }
 
     private boolean hasSimulationRun(SimulationSnapshot snapshot) {
-        if (snapshot == null) {
-            return false;
-        }
-        return snapshot.getTerminatedProcessesSnapshot().length > 0
+        return snapshot != null
+                && (snapshot.getTerminatedProcessesSnapshot().length > 0
                 || snapshot.getDispatchHistorySnapshot().length > 0
                 || snapshot.getJournalEntriesSnapshot().length > 0
-                || snapshot.getTotalSeekDistance() > 0;
+                || snapshot.getTotalSeekDistance() > 0);
     }
 
     private boolean isCoordinatorIdle(SimulationSnapshot snapshot) {
-        if (snapshot == null) {
-            return true;
-        }
-        boolean hasRunning = snapshot.getRunningProcessSnapshot() != null;
-        boolean hasNew = snapshot.getNewProcessesSnapshot().length > 0;
-        boolean hasReady = snapshot.getReadyProcessesSnapshot().length > 0;
-        boolean hasBlocked = snapshot.getBlockedProcessesSnapshot().length > 0;
-        return !(hasRunning || hasNew || hasReady || hasBlocked);
+        return snapshot == null || (
+                snapshot.getRunningProcessSnapshot() == null
+                && snapshot.getNewProcessesSnapshot().length == 0
+                && snapshot.getReadyProcessesSnapshot().length == 0
+                && snapshot.getBlockedProcessesSnapshot().length == 0);
     }
 
     private String buildBusyScenarioMessage(SimulationSnapshot snapshot) {
         if (snapshot == null) {
             return "No se puede cargar el escenario en este momento. Intente nuevamente en unos segundos.";
         }
-
         int newCount = snapshot.getNewProcessesSnapshot().length;
         int readyCount = snapshot.getReadyProcessesSnapshot().length;
         int blockedCount = snapshot.getBlockedProcessesSnapshot().length;
-        int runningCount = snapshot.getRunningProcessSnapshot() != null ? 1 : 0;
-
-        return "No se puede cargar el escenario porque la simulación aún no está idle.\n"
-                + "Procesos activos: " + (newCount + readyCount + blockedCount + runningCount) + "\n"
+        int runningCount = snapshot.getRunningProcessSnapshot() == null ? 0 : 1;
+        int total = newCount + readyCount + blockedCount + runningCount;
+        return "No se puede cargar el escenario porque la simulacion aun no esta idle.\n"
+                + "Procesos activos: " + total + "\n"
                 + "(Nuevo=" + newCount
                 + ", Listo=" + readyCount
                 + ", Bloqueado=" + blockedCount
@@ -495,66 +455,49 @@ public class GuiController {
     private void showStatisticsDialog() {
         SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
         if (snapshot == null) {
-            showError("No hay snapshot disponible todavía.");
+            showError("No hay snapshot disponible todavia.");
             return;
         }
-
-        SimulationSnapshot.DiskBlockSummary[] blocks = snapshot.getDiskBlocksSnapshot();
-        int usedBlocks = 0;
-        for (SimulationSnapshot.DiskBlockSummary block : blocks) {
-            if (!block.isFree()) {
-                usedBlocks++;
-            }
-        }
-
-        int totalBlocks = blocks.length;
-        int freeBlocks = totalBlocks - usedBlocks;
-        int completedProcesses = snapshot.getTerminatedProcessesSnapshot().length;
-        long simulationTick = estimateSimulationTick(snapshot);
-
+        int totalBlocks = snapshot.getDiskBlocksSnapshot().length;
+        int freeBlocks = countFreeBlocks(snapshot);
+        int usedBlocks = totalBlocks - freeBlocks;
         String message = "Bloques usados: " + usedBlocks + " / " + totalBlocks + "\n"
                 + "Bloques libres: " + freeBlocks + "\n"
                 + "Seek total: " + snapshot.getTotalSeekDistance() + "\n"
-                + "Procesos completados: " + completedProcesses + "\n"
-                + "Tiempo de simulación (tick): " + simulationTick;
-
-        JOptionPane.showMessageDialog(mainFrame, message, "Estadísticas del Sistema", JOptionPane.INFORMATION_MESSAGE);
+                + "Procesos completados: " + snapshot.getTerminatedProcessesSnapshot().length + "\n"
+                + "Tiempo de simulacion (tick): " + estimateSimulationTick(snapshot);
+        showInfo(message, "Estadisticas del Sistema");
     }
 
     private long estimateSimulationTick(SimulationSnapshot snapshot) {
         long maxTick = 0L;
-        SimulationSnapshot.EventLogEntrySummary[] entries = snapshot.getEventLogEntriesSnapshot();
-        for (SimulationSnapshot.EventLogEntrySummary entry : entries) {
-            if (entry.getTick() > maxTick) {
-                maxTick = entry.getTick();
-            }
+        for (SimulationSnapshot.EventLogEntrySummary entry : snapshot.getEventLogEntriesSnapshot()) {
+            maxTick = Math.max(maxTick, entry.getTick());
         }
         return maxTick;
     }
 
     private Path chooseFileToOpen(String title) {
-        JFileChooser chooser = buildJsonFileChooser(title);
-        int result = chooser.showOpenDialog(mainFrame);
-        if (result != JFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
-            return null;
-        }
-        return chooser.getSelectedFile().toPath();
+        return chooseJsonPath(buildJsonFileChooser(title), chooser -> chooser.showOpenDialog(mainFrame));
     }
 
     private Path chooseFileToSave(String title, String defaultName) {
         JFileChooser chooser = buildJsonFileChooser(title);
         chooser.setSelectedFile(new java.io.File(defaultName));
-        int result = chooser.showSaveDialog(mainFrame);
+        Path path = chooseJsonPath(chooser, fileChooser -> fileChooser.showSaveDialog(mainFrame));
+        if (path == null) {
+            return null;
+        }
+        String fileName = path.getFileName() == null ? "" : path.getFileName().toString().toLowerCase();
+        return fileName.endsWith(".json") ? path : path.resolveSibling(path.getFileName() + ".json");
+    }
+
+    private Path chooseJsonPath(JFileChooser chooser, ToIntFunction<JFileChooser> dialogOpener) {
+        int result = dialogOpener.applyAsInt(chooser);
         if (result != JFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
             return null;
         }
-
-        Path selectedPath = chooser.getSelectedFile().toPath();
-        String fileName = selectedPath.getFileName() != null ? selectedPath.getFileName().toString().toLowerCase() : "";
-        if (!fileName.endsWith(".json")) {
-            selectedPath = selectedPath.resolveSibling(selectedPath.getFileName() + ".json");
-        }
-        return selectedPath;
+        return chooser.getSelectedFile().toPath();
     }
 
     private JFileChooser buildJsonFileChooser(String title) {
@@ -572,11 +515,14 @@ public class GuiController {
         String normalized = label.trim().toLowerCase();
         if (normalized.contains("instant")) {
             return 0;
-        } else if (normalized.contains("rápido") || normalized.contains("rapido")) {
+        }
+        if (normalized.contains("rapido") || normalized.contains("rÃ¡pido") || normalized.contains("rápido")) {
             return 100;
-        } else if (normalized.contains("medio")) {
+        }
+        if (normalized.contains("medio")) {
             return 500;
-        } else if (normalized.contains("lento")) {
+        }
+        if (normalized.contains("lento")) {
             return 1000;
         }
         return fallback;
@@ -587,55 +533,50 @@ public class GuiController {
     }
 
     private void updatePlaybackLabel(int executionDelay) {
-        String mode = coordinator.isStepModeEnabled() ? "Pausado / Manual" : "Reproduciendo";
-        String speedText = executionDelay <= 0 ? "Instantáneo" : executionDelay + " ms";
+        String speedText = executionDelay <= 0 ? "Instantaneo" : executionDelay + " ms";
         if (executionDelay >= 1000) {
             speedText = (executionDelay / 1000) + " Seg";
         }
-        mainFrame.getLblCycle().setText(mode + " (" + speedText + ")");
+        String mode = coordinator.isStepModeEnabled() ? "Pausado / Manual" : "Reproduciendo";
+        mainFrame.lblCycle.setText(mode + " (" + speedText + ")");
     }
 
     private void runCoordinatorAction(String errorPrefix, Runnable action) {
         try {
             action.run();
-        } catch (Exception ex) {
-            showError(errorPrefix + ": " + ex.getMessage());
+        } catch (Exception exception) {
+            showError(errorPrefix + ": " + exception.getMessage());
         }
     }
 
     private void updateActionButtonsBySystemState(boolean recoveryRequired) {
         boolean enableGeneralActions = !recoveryRequired && !administrativeTaskRunning;
-
-        // En recovery quarantine solo se permite recovery/load system/estadisticas.
-        mainFrame.getBtnAdmin().setEnabled(enableGeneralActions);
-        mainFrame.getBtnUser().setEnabled(enableGeneralActions);
-        mainFrame.getBtnPlay().setEnabled(enableGeneralActions);
-        mainFrame.getBtnPause().setEnabled(enableGeneralActions);
-        mainFrame.getBtnStep().setEnabled(enableGeneralActions);
-        mainFrame.getComboPlaybackSpeed().setEnabled(enableGeneralActions);
-        mainFrame.getComboPolicy().setEnabled(enableGeneralActions);
-        mainFrame.getBtnPolicyChange().setEnabled(enableGeneralActions);
-        mainFrame.getBtnSimularFallo().setEnabled(enableGeneralActions);
-        mainFrame.getBtnAdvanced().setEnabled(enableGeneralActions);
-
-        mainFrame.getBtnCreateFile().setEnabled(enableGeneralActions);
-        mainFrame.getBtnCreateDir().setEnabled(enableGeneralActions);
-        mainFrame.getBtnRead().setEnabled(enableGeneralActions);
-        mainFrame.getBtnRename().setEnabled(enableGeneralActions);
-        mainFrame.getBtnDelete().setEnabled(enableGeneralActions);
-        mainFrame.getBtnSaveSystem().setEnabled(enableGeneralActions);
-        mainFrame.getBtnLoadScenario().setEnabled(enableGeneralActions);
-
-        mainFrame.getBtnStats().setEnabled(true);
-        mainFrame.getBtnLoadSystem().setEnabled(true);
-        mainFrame.getBtnRecovery().setEnabled(true);
+        setEnabled(enableGeneralActions,
+                mainFrame.btnAdmin,
+                mainFrame.btnUser,
+                mainFrame.btnPlay,
+                mainFrame.btnPause,
+                mainFrame.btnStep,
+                mainFrame.comboPlaybackSpeed,
+                mainFrame.comboPolicy,
+                mainFrame.btnPolicyChange,
+                mainFrame.btnSimularFallo,
+                mainFrame.btnAdvanced,
+                mainFrame.btnCreateFile,
+                mainFrame.btnCreateDir,
+                mainFrame.btnRead,
+                mainFrame.btnRename,
+                mainFrame.btnDelete,
+                mainFrame.btnSaveSystem,
+                mainFrame.btnLoadScenario);
+        setEnabled(true, mainFrame.btnStats, mainFrame.btnLoadSystem, mainFrame.btnRecovery);
     }
 
     private void updateFailureUxState(boolean failureArmed, boolean recoveryRequired) {
         if (recoveryRequired) {
-            mainFrame.getLblSystemState().setText("Estado del Sistema: Recovery requerido");
-            mainFrame.getLblSystemState().setForeground(DarkTheme.ACCENT_RED);
-            mainFrame.getLblSystemState().setToolTipText("Se requiere ejecutar Recovery antes de continuar");
+            mainFrame.lblSystemState.setText("Estado del Sistema: Recovery requerido");
+            mainFrame.lblSystemState.setForeground(DarkTheme.ACCENT_RED);
+            mainFrame.lblSystemState.setToolTipText("Se requiere ejecutar Recovery antes de continuar");
             if (!recoveryPopupShown) {
                 recoveryPopupShown = true;
                 JOptionPane.showMessageDialog(
@@ -649,57 +590,55 @@ public class GuiController {
 
         recoveryPopupShown = false;
         if (failureArmed) {
-            mainFrame.getLblSystemState().setText("Estado del Sistema: Fallo armado");
-            mainFrame.getLblSystemState().setForeground(DarkTheme.ACCENT_YELLOW);
-            mainFrame.getLblSystemState().setToolTipText(ARMED_TOOLTIP);
+            mainFrame.lblSystemState.setText("Estado del Sistema: Fallo armado");
+            mainFrame.lblSystemState.setForeground(DarkTheme.ACCENT_YELLOW);
+            mainFrame.lblSystemState.setToolTipText(ARMED_TOOLTIP);
             return;
         }
 
-        mainFrame.getLblSystemState().setText("Estado del Sistema: Normal");
-        mainFrame.getLblSystemState().setForeground(DarkTheme.FG_PRIMARY);
-        mainFrame.getLblSystemState().setToolTipText(null);
+        mainFrame.lblSystemState.setText("Estado del Sistema: Normal");
+        mainFrame.lblSystemState.setForeground(DarkTheme.FG_PRIMARY);
+        mainFrame.lblSystemState.setToolTipText(null);
     }
 
     private void refreshFromSnapshot() {
         SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
-        if (snapshot == null)
+        if (snapshot == null) {
             return;
+        }
 
-        // Keep playback label aligned with the actual coordinator state.
         updatePlaybackLabel();
-
         boolean recoveryRequired = coordinator.isRecoveryQuarantineActive();
         boolean failureArmed = coordinator.isSimulatedFailureArmed() && !recoveryRequired;
-
         showAsyncIntentFailurePopups(snapshot, recoveryRequired);
-
         updateActionButtonsBySystemState(recoveryRequired);
         updateFailureUxState(failureArmed, recoveryRequired);
 
-        mainFrame.getFileSystemTreePanel().updateFromSnapshot(snapshot.getFileSystemNodesSnapshot());
-        mainFrame.getDiskVisualizationPanel().updateFromSnapshot(snapshot.getDiskBlocksSnapshot(),
-                snapshot.getFileSystemNodesSnapshot(), snapshot.getHeadBlock());
-        mainFrame.getJournalPanel().updateFromSnapshot(snapshot.getJournalEntriesSnapshot());
-        mainFrame.getProcessQueuePanel().updateFromSnapshot(
+        mainFrame.fileSystemTreePanel.updateFromSnapshot(snapshot.getFileSystemNodesSnapshot());
+        mainFrame.diskVisualizationPanel.updateFromSnapshot(
+                snapshot.getDiskBlocksSnapshot(),
+                snapshot.getFileSystemNodesSnapshot(),
+                snapshot.getHeadBlock());
+        mainFrame.journalPanel.updateFromSnapshot(snapshot.getJournalEntriesSnapshot());
+        mainFrame.processQueuePanel.updateFromSnapshot(
                 snapshot.getRunningProcessSnapshot(),
                 snapshot.getReadyProcessesSnapshot(),
                 snapshot.getBlockedProcessesSnapshot(),
                 snapshot.getTerminatedProcessesSnapshot());
-        mainFrame.getEventLogPanel().updateFromSnapshot(snapshot.getEventLogEntriesSnapshot());
+        mainFrame.eventLogPanel.updateFromSnapshot(snapshot.getEventLogEntriesSnapshot());
 
-        mainFrame.getLblStatusLeft().setText("Cabeza: Block " + snapshot.getHeadBlock() + " ("
-                + snapshot.getHeadDirection() + ") | Política: " + snapshot.getPolicy());
-
+        mainFrame.lblStatusLeft.setText(
+                "Cabeza: Block " + snapshot.getHeadBlock() + " (" + snapshot.getHeadDirection() + ") | Politica: " + snapshot.getPolicy());
         if (snapshot.getSessionSummary() != null) {
-            mainFrame.getLblStatusCenter().setText("Sesión: " + snapshot.getSessionSummary().getCurrentUserId() + " / "
-                    + snapshot.getSessionSummary().getCurrentRole());
+            mainFrame.lblStatusCenter.setText(
+                    "Sesion: " + snapshot.getSessionSummary().getCurrentUserId() + " / " + snapshot.getSessionSummary().getCurrentRole());
         }
 
         String statusRight = "Seek total: " + snapshot.getTotalSeekDistance();
         if (recoveryRequired) {
-            statusRight = statusRight + " | Modo: Recovery pendiente";
+            statusRight += " | Modo: Recovery pendiente";
         }
-        mainFrame.getLblStatusRight().setText(statusRight);
+        mainFrame.lblStatusRight.setText(statusRight);
     }
 
     private void showAsyncIntentFailurePopups(SimulationSnapshot snapshot, boolean recoveryRequired) {
@@ -707,40 +646,28 @@ public class GuiController {
             return;
         }
 
-        SimulationSnapshot.ProcessSnapshot[] terminated = snapshot.getTerminatedProcessesSnapshot();
         Set<String> currentTerminatedIds = new HashSet<>();
-
-        for (SimulationSnapshot.ProcessSnapshot process : terminated) {
+        for (SimulationSnapshot.ProcessSnapshot process : snapshot.getTerminatedProcessesSnapshot()) {
             currentTerminatedIds.add(process.getProcessId());
-        }
-
-        for (SimulationSnapshot.ProcessSnapshot process : terminated) {
-            if (!isManualIntentProcess(process)) {
+            if (!isManualIntentProcess(process)
+                    || process.getResultStatus() != ResultStatus.FAILED
+                    || notifiedIntentFailures.contains(process.getProcessId())) {
                 continue;
             }
-            if (process.getResultStatus() != ve.edu.unimet.so.project2.process.ResultStatus.FAILED) {
-                continue;
-            }
-            if (notifiedIntentFailures.contains(process.getProcessId())) {
-                continue;
-            }
-
-            String operation = resolveOperationLabel(process.getOperationType());
-            String friendlyMessage = toFriendlyErrorMessage(operation, process.getErrorMessage());
-            showError(friendlyMessage);
+            showError(toFriendlyErrorMessage(
+                    resolveOperationLabel(process.getOperationType()),
+                    process.getErrorMessage()));
             notifiedIntentFailures.add(process.getProcessId());
             break;
         }
-
         notifiedIntentFailures.retainAll(currentTerminatedIds);
     }
 
     private boolean isManualIntentProcess(SimulationSnapshot.ProcessSnapshot process) {
-        String processId = process.getProcessId();
-        return processId != null && processId.startsWith("INTENT-PROC-");
+        return process.getProcessId() != null && process.getProcessId().startsWith("INTENT-PROC-");
     }
 
-    private String resolveOperationLabel(ve.edu.unimet.so.project2.process.IoOperationType operationType) {
+    private String resolveOperationLabel(IoOperationType operationType) {
         if (operationType == null) {
             return "procesar";
         }
@@ -752,8 +679,12 @@ public class GuiController {
         };
     }
 
-    private void showError(String msg) {
-        JOptionPane.showMessageDialog(mainFrame, msg, "Error", JOptionPane.ERROR_MESSAGE);
+    private void showInfo(String message, String title) {
+        JOptionPane.showMessageDialog(mainFrame, message, title, JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void showError(String message) {
+        JOptionPane.showMessageDialog(mainFrame, message, "Error", JOptionPane.ERROR_MESSAGE);
     }
 
     private int parseRequiredPositiveInt(String rawValue, String validationMessage) {
@@ -763,53 +694,61 @@ public class GuiController {
                 throw new IllegalArgumentException(validationMessage);
             }
             return value;
-        } catch (NumberFormatException ex) {
+        } catch (NumberFormatException exception) {
             throw new IllegalArgumentException(validationMessage);
         }
     }
 
     private int countFreeBlocks() {
-        SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
-        if (snapshot == null || snapshot.getDiskBlocksSnapshot() == null) {
+        return countFreeBlocks(coordinator.getLatestSnapshot());
+    }
+
+    private int countFreeBlocks(SimulationSnapshot snapshot) {
+        if (snapshot == null) {
             return 0;
         }
-        int free = 0;
+        int freeBlocks = 0;
         for (SimulationSnapshot.DiskBlockSummary block : snapshot.getDiskBlocksSnapshot()) {
             if (block.isFree()) {
-                free++;
+                freeBlocks++;
             }
         }
-        return free;
+        return freeBlocks;
     }
 
     private boolean isDirectoryPath(String path) {
+        if (path == null) {
+            return false;
+        }
         SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
-        if (snapshot == null || path == null) {
+        if (snapshot == null) {
             return false;
         }
         for (SimulationSnapshot.FileSystemNodeSummary node : snapshot.getFileSystemNodesSnapshot()) {
             if (path.equals(node.getPath())) {
-                return node.getType() == ve.edu.unimet.so.project2.filesystem.FsNodeType.DIRECTORY;
+                return node.getType() == FsNodeType.DIRECTORY;
             }
         }
         return false;
     }
 
-    private void showOperationError(String operation, Exception ex) {
-        String message = ex.getMessage();
-        if (message == null || message.isBlank()) {
-            message = ex.getClass().getSimpleName();
-        }
-
-        showError(toFriendlyErrorMessage(operation, message));
+    private void showOperationError(String operation, Exception exception) {
+        showMappedError(operation, exception, this::toFriendlyErrorMessage);
     }
 
-    private void showAdministrativeError(String action, Exception ex) {
-        String message = ex.getMessage();
+    private void showAdministrativeError(String action, Exception exception) {
+        showMappedError(action, exception, this::toFriendlyAdministrativeErrorMessage);
+    }
+
+    private void showMappedError(
+            String action,
+            Exception exception,
+            BiFunction<String, String, String> mapper) {
+        String message = exception.getMessage();
         if (message == null || message.isBlank()) {
-            message = ex.getClass().getSimpleName();
+            message = exception.getClass().getSimpleName();
         }
-        showError(toFriendlyAdministrativeErrorMessage(action, message));
+        showError(mapper.apply(action, message));
     }
 
     private String toFriendlyAdministrativeErrorMessage(String action, String rawMessage) {
@@ -817,7 +756,7 @@ public class GuiController {
         String lower = message.toLowerCase();
 
         if (lower.contains("failed to load scenario")) {
-            return "No se pudo cargar el escenario JSON. Verifica que el archivo exista y tenga formato válido.";
+            return "No se pudo cargar el escenario JSON. Verifica que el archivo exista y tenga formato valido.";
         }
         if (lower.contains("scenario initial_head is out of range") || lower.contains("initial_head")) {
             return "El escenario tiene un initial_head fuera del rango de bloques del disco.";
@@ -829,19 +768,24 @@ public class GuiController {
             return "El escenario define archivos de sistema con bloques fuera de rango.";
         }
         if (lower.contains("failed to load system state")) {
-            return "No se pudo cargar el estado del sistema. El archivo puede estar corrupto o no ser válido.";
+            return "No se pudo cargar el estado del sistema. El archivo puede estar corrupto o no ser valido.";
         }
         if (lower.contains("failed to save system state")) {
             return "No se pudo guardar el estado del sistema. Verifica permisos y ruta del archivo.";
         }
         if (lower.contains("path cannot be null")) {
-            return "Debes seleccionar un archivo válido para completar esta acción.";
+            return "Debes seleccionar un archivo valido para completar esta accion.";
         }
         if (lower.contains("coordinator is awaiting recovery")) {
-            return "No se puede " + action + " mientras el sistema está en modo de recovery pendiente.";
+            return "No se puede " + action + " mientras el sistema esta en modo de recovery pendiente.";
         }
+        return "No se pudo " + action + ". Verifica los datos e intentalo de nuevo.";
+    }
 
-        return "No se pudo " + action + ". Verifica los datos e inténtalo de nuevo.";
+    private void setEnabled(boolean enabled, Component... components) {
+        for (Component component : components) {
+            component.setEnabled(enabled);
+        }
     }
 
     private String toFriendlyErrorMessage(String operation, String rawMessage) {
@@ -852,10 +796,10 @@ public class GuiController {
             return "No tienes permisos para " + operation + " este recurso porque no es tuyo.";
         }
         if (lower.contains("not enough free disk blocks")) {
-            return "No hay bloques suficientes disponibles para completar la operación.";
+            return "No hay bloques suficientes disponibles para completar la operacion.";
         }
         if (lower.contains("path does not reference a directory")) {
-            return "La ruta seleccionada no es un directorio válido para esta operación.";
+            return "La ruta seleccionada no es un directorio valido para esta operacion.";
         }
         if (lower.contains("path does not reference a file")) {
             return "La ruta seleccionada no es un archivo. Debes seleccionar un archivo para leer.";
@@ -863,24 +807,23 @@ public class GuiController {
         if (lower.contains("name cannot contain /")
                 || lower.contains("name cannot be . or ..")
                 || lower.contains("name cannot be blank")) {
-            return "El nombre ingresado no es válido. No puede ser vacío, '.' , '..' ni contener '/'.";
+            return "El nombre ingresado no es valido. No puede ser vacio, '.', '..' ni contener '/'.";
         }
         if (lower.contains("duplicate child name under parent") || lower.contains("already exists at path")) {
             return "Ya existe un archivo o directorio con ese nombre en la carpeta destino.";
         }
         if (lower.contains("already has requested name")) {
-            return "El nombre solicitado ya estaba aplicado. La operación de renombrado no realizó cambios.";
+            return "El nombre solicitado ya estaba aplicado. La operacion de renombrado no realizo cambios.";
         }
         if (lower.contains("root cannot be renamed")) {
-            return "No se puede renombrar la raíz del sistema de archivos.";
+            return "No se puede renombrar la raiz del sistema de archivos.";
         }
         if (lower.contains("root cannot be deleted")) {
-            return "No se puede eliminar la raíz del sistema de archivos.";
+            return "No se puede eliminar la raiz del sistema de archivos.";
         }
         if (lower.contains("node not found at path")) {
-            return "La ruta seleccionada ya no existe. Actualiza la vista e inténtalo de nuevo.";
+            return "La ruta seleccionada ya no existe. Actualiza la vista e intentalo de nuevo.";
         }
-
         return "Error al " + operation + ": " + message;
     }
 }

@@ -2,25 +2,19 @@ package ve.edu.unimet.so.project2.coordinator.core;
 
 import ve.edu.unimet.so.project2.journal.undo.JournalUndoData;
 
-public final class PreparedJournalData {
+public record PreparedJournalData(
+        JournalUndoData undoData,
+        String targetNodeId,
+        String ownerUserId,
+        String description) {
 
-    private final JournalUndoData undoData;
-    private final String targetNodeId;
-    private final String ownerUserId;
-    private final String description;
-
-    public PreparedJournalData(
-            JournalUndoData undoData,
-            String targetNodeId,
-            String ownerUserId,
-            String description) {
+    public PreparedJournalData {
         if (undoData == null) {
             throw new IllegalArgumentException("undoData cannot be null");
         }
-        this.undoData = undoData;
-        this.targetNodeId = normalizeOptional(targetNodeId);
-        this.ownerUserId = normalizeOptional(ownerUserId);
-        this.description = normalizeOptional(description);
+        targetNodeId = normalizeOptional(targetNodeId);
+        ownerUserId = normalizeOptional(ownerUserId);
+        description = normalizeOptional(description);
     }
 
     public JournalUndoData getUndoData() {

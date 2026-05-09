@@ -2,17 +2,13 @@ package ve.edu.unimet.so.project2.coordinator.core;
 
 import ve.edu.unimet.so.project2.process.ResultStatus;
 
-public final class OperationApplyResult {
+public record OperationApplyResult(ResultStatus resultStatus, String errorMessage) {
 
-    private final ResultStatus resultStatus;
-    private final String errorMessage;
-
-    public OperationApplyResult(ResultStatus resultStatus, String errorMessage) {
+    public OperationApplyResult {
         if (resultStatus == null) {
             throw new IllegalArgumentException("resultStatus cannot be null");
         }
-        this.resultStatus = resultStatus;
-        this.errorMessage = normalizeOptional(errorMessage);
+        errorMessage = normalizeOptional(errorMessage);
     }
 
     public static OperationApplyResult success() {

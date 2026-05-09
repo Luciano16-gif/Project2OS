@@ -1,5 +1,8 @@
 package ve.edu.unimet.so.project2.persistence;
 
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import ve.edu.unimet.so.project2.application.SimulationApplicationState;
 import ve.edu.unimet.so.project2.disk.DiskBlock;
 import ve.edu.unimet.so.project2.disk.SimulatedDisk;
@@ -34,37 +37,31 @@ public final class SystemStateMapper {
         FsNode[] nodes = applicationState.getFileSystemCatalog().getAllNodesSnapshot();
         PersistedSystemState.FileSystemNodeData[] persistedNodes =
                 new PersistedSystemState.FileSystemNodeData[nodes.length];
-        for (int i = 0; i < nodes.length; i++) {
-            persistedNodes[i] = toPersistedNode(nodes[i]);
-        }
+        Arrays.setAll(persistedNodes, i -> toPersistedNode(nodes[i]));
 
         PersistedSystemState.DiskBlockData[] persistedBlocks =
                 new PersistedSystemState.DiskBlockData[disk.getTotalBlocks()];
-        for (int i = 0; i < persistedBlocks.length; i++) {
+        Arrays.setAll(persistedBlocks, i -> {
             DiskBlock block = disk.getBlock(i);
-            persistedBlocks[i] = new PersistedSystemState.DiskBlockData(
+            return new PersistedSystemState.DiskBlockData(
                     block.getIndex(),
                     block.isFree(),
                     block.getOwnerFileId(),
                     block.getNextBlockIndex(),
                     block.isSystemReserved());
-        }
+        });
 
         User[] users = applicationState.getUserStore().getUsersSnapshot();
         PersistedSystemState.UserData[] persistedUsers = new PersistedSystemState.UserData[users.length];
-        for (int i = 0; i < users.length; i++) {
-            persistedUsers[i] = new PersistedSystemState.UserData(
-                    users[i].getUserId(),
-                    users[i].getUsername(),
-                    users[i].getRole());
-        }
+        Arrays.setAll(persistedUsers, i -> new PersistedSystemState.UserData(
+                users[i].getUserId(),
+                users[i].getUsername(),
+                users[i].getRole()));
 
         Object[] entries = journalManager.getEntriesSnapshot();
         PersistedSystemState.JournalEntryData[] persistedEntries =
                 new PersistedSystemState.JournalEntryData[entries.length];
-        for (int i = 0; i < entries.length; i++) {
-            persistedEntries[i] = toPersistedEntry((JournalEntry) entries[i]);
-        }
+        Arrays.setAll(persistedEntries, i -> toPersistedEntry((JournalEntry) entries[i]));
 
         return new PersistedSystemState(
                 policy,
@@ -103,8 +100,8 @@ public final class SystemStateMapper {
     }
 
     private PersistedSystemState.FileSystemNodeData toPersistedNode(FsNode node) {
-        if (node instanceof FileNode file) {
-            return new PersistedSystemState.FileSystemNodeData(
+        return switch (node) {
+            case FileNode file -> new PersistedSystemState.FileSystemNodeData(
                     file.getId(),
                     file.getParent() == null ? null : file.getParent().getId(),
                     file.getType(),
@@ -116,21 +113,22 @@ public final class SystemStateMapper {
                     file.getFirstBlockIndex(),
                     file.getColorId(),
                     file.isSystemFile());
-        }
-
-        DirectoryNode directory = requireDirectoryNode(node);
-        return new PersistedSystemState.FileSystemNodeData(
-                directory.getId(),
-                directory.getParent() == null ? null : directory.getParent().getId(),
-                directory.getType(),
-                directory.getName(),
-                directory.getPath(),
-                directory.getOwnerUserId(),
-                directory.getPermissions().isPublicReadable(),
-                0,
-                JournalNodeSnapshot.NO_BLOCK,
-                null,
-                false);
+            default -> {
+                DirectoryNode directory = requireDirectoryNode(node);
+                yield new PersistedSystemState.FileSystemNodeData(
+                        directory.getId(),
+                        directory.getParent() == null ? null : directory.getParent().getId(),
+                        directory.getType(),
+                        directory.getName(),
+                        directory.getPath(),
+                        directory.getOwnerUserId(),
+                        directory.getPermissions().isPublicReadable(),
+                        0,
+                        JournalNodeSnapshot.NO_BLOCK,
+                        null,
+                        false);
+            }
+        };
     }
 
     private PersistedSystemState.JournalEntryData toPersistedEntry(JournalEntry entry) {
@@ -146,8 +144,8 @@ public final class SystemStateMapper {
     }
 
     private PersistedSystemState.UndoData toPersistedUndoData(JournalUndoData undoData) {
-        if (undoData instanceof CreateFileUndoData createFileUndoData) {
-            return new PersistedSystemState.UndoData(
+        return switch (undoData) {
+            case CreateFileUndoData createFileUndoData -> new PersistedSystemState.UndoData(
                     "CREATE_FILE",
                     createFileUndoData.getCreatedFileId(),
                     null,
@@ -160,9 +158,7 @@ public final class SystemStateMapper {
                     null,
                     null,
                     null);
-        }
-        if (undoData instanceof CreateDirectoryUndoData createDirectoryUndoData) {
-            return new PersistedSystemState.UndoData(
+            case CreateDirectoryUndoData createDirectoryUndoData -> new PersistedSystemState.UndoData(
                     "CREATE_DIRECTORY",
                     createDirectoryUndoData.getCreatedDirectoryId(),
                     null,
@@ -175,9 +171,7 @@ public final class SystemStateMapper {
                     null,
                     null,
                     null);
-        }
-        if (undoData instanceof DeleteFileUndoData deleteFileUndoData) {
-            return new PersistedSystemState.UndoData(
+            case DeleteFileUndoData deleteFileUndoData -> new PersistedSystemState.UndoData(
                     "DELETE_FILE",
                     null,
                     null,
@@ -190,9 +184,7 @@ public final class SystemStateMapper {
                     null,
                     null,
                     null);
-        }
-        if (undoData instanceof DeleteDirectoryUndoData deleteDirectoryUndoData) {
-            return new PersistedSystemState.UndoData(
+            case DeleteDirectoryUndoData deleteDirectoryUndoData -> new PersistedSystemState.UndoData(
                     "DELETE_DIRECTORY",
                     null,
                     deleteDirectoryUndoData.getDeletedDirectoryId(),
@@ -205,24 +197,23 @@ public final class SystemStateMapper {
                     null,
                     null,
                     null);
-        }
-        if (!(undoData instanceof UpdateRenameUndoData updateRenameUndoData)) {
-            String undoType = (undoData == null) ? "null" : undoData.getClass().getSimpleName();
-            throw new IllegalArgumentException("unsupported undoData type: " + undoType);
-        }
-        return new PersistedSystemState.UndoData(
-                "UPDATE_RENAME",
-                null,
-                null,
-                updateRenameUndoData.getParentDirectoryId(),
-                updateRenameUndoData.getParentDirectoryPath(),
-                null,
-                null,
-                null,
-                null,
-                updateRenameUndoData.getTargetNodeId(),
-                updateRenameUndoData.getOldName(),
-                updateRenameUndoData.getNewName());
+            case UpdateRenameUndoData updateRenameUndoData -> new PersistedSystemState.UndoData(
+                    "UPDATE_RENAME",
+                    null,
+                    null,
+                    updateRenameUndoData.getParentDirectoryId(),
+                    updateRenameUndoData.getParentDirectoryPath(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    updateRenameUndoData.getTargetNodeId(),
+                    updateRenameUndoData.getOldName(),
+                    updateRenameUndoData.getNewName());
+            case null, default -> throw new IllegalArgumentException(
+                    "unsupported undoData type: "
+                            + (undoData == null ? "null" : undoData.getClass().getSimpleName()));
+        };
     }
 
     private PersistedSystemState.NodeSnapshotData toPersistedNodeSnapshot(JournalNodeSnapshot snapshot) {
@@ -243,22 +234,18 @@ public final class SystemStateMapper {
     private PersistedSystemState.NodeSnapshotData[] toPersistedNodeSnapshots(JournalNodeSnapshot[] snapshots) {
         PersistedSystemState.NodeSnapshotData[] persisted =
                 new PersistedSystemState.NodeSnapshotData[snapshots.length];
-        for (int i = 0; i < snapshots.length; i++) {
-            persisted[i] = toPersistedNodeSnapshot(snapshots[i]);
-        }
+        Arrays.setAll(persisted, i -> toPersistedNodeSnapshot(snapshots[i]));
         return persisted;
     }
 
     private PersistedSystemState.BlockSnapshotData[] toPersistedBlockSnapshots(JournalBlockSnapshot[] snapshots) {
         PersistedSystemState.BlockSnapshotData[] persisted =
                 new PersistedSystemState.BlockSnapshotData[snapshots.length];
-        for (int i = 0; i < snapshots.length; i++) {
-            persisted[i] = new PersistedSystemState.BlockSnapshotData(
+        Arrays.setAll(persisted, i -> new PersistedSystemState.BlockSnapshotData(
                     snapshots[i].getIndex(),
                     snapshots[i].getOwnerFileId(),
                     snapshots[i].getNextBlockIndex(),
-                    snapshots[i].isSystemReserved());
-        }
+                    snapshots[i].isSystemReserved()));
         return persisted;
     }
 
@@ -279,34 +266,35 @@ public final class SystemStateMapper {
         }
 
         PersistedSystemState.FileSystemNodeData rootData = null;
-        Object[] nodes = new Object[persistedNodes.length];
-        for (int i = 0; i < persistedNodes.length; i++) {
-            PersistedSystemState.FileSystemNodeData nodeData = persistedNodes[i];
+        Map<String, FsNode> nodesById = new LinkedHashMap<>();
+        for (PersistedSystemState.FileSystemNodeData nodeData : persistedNodes) {
             if (nodeData.parentId() == null) {
                 if (rootData != null) {
                     throw new IllegalArgumentException("filesystem must contain exactly one root node");
                 }
                 rootData = nodeData;
             }
-            nodes[i] = createDetachedNode(nodeData);
+            if (nodesById.put(nodeData.id(), createDetachedNode(nodeData)) != null) {
+                throw new IllegalArgumentException("duplicate filesystem node id: " + nodeData.id());
+            }
         }
         if (rootData == null || rootData.type() != FsNodeType.DIRECTORY || !"/".equals(rootData.path())) {
             throw new IllegalArgumentException("filesystem must contain a valid root directory");
         }
 
-        DirectoryNode root = requireDirectoryNode(findNodeById(nodes, rootData.id()));
+        DirectoryNode root = requireDirectoryNode(nodesById.get(rootData.id()));
         int attachedCount = 1;
-        while (attachedCount < nodes.length) {
+        while (attachedCount < nodesById.size()) {
             boolean progressed = false;
             for (PersistedSystemState.FileSystemNodeData nodeData : persistedNodes) {
                 if (nodeData.parentId() == null) {
                     continue;
                 }
-                FsNode node = findNodeById(nodes, nodeData.id());
+                FsNode node = nodesById.get(nodeData.id());
                 if (node.isAttached()) {
                     continue;
                 }
-                FsNode parent = findNodeById(nodes, nodeData.parentId());
+                FsNode parent = nodesById.get(nodeData.parentId());
                 if (parent == null) {
                     throw new IllegalArgumentException("parent node not found: " + nodeData.parentId());
                 }
@@ -459,9 +447,7 @@ public final class SystemStateMapper {
             throw new IllegalArgumentException("nodeSnapshots cannot be null");
         }
         JournalNodeSnapshot[] result = new JournalNodeSnapshot[snapshots.length];
-        for (int i = 0; i < snapshots.length; i++) {
-            result[i] = toNodeSnapshot(snapshots[i]);
-        }
+        Arrays.setAll(result, i -> toNodeSnapshot(snapshots[i]));
         return result;
     }
 
@@ -470,34 +456,20 @@ public final class SystemStateMapper {
             throw new IllegalArgumentException("blockSnapshots cannot be null");
         }
         JournalBlockSnapshot[] result = new JournalBlockSnapshot[snapshots.length];
-        for (int i = 0; i < snapshots.length; i++) {
-            result[i] = new JournalBlockSnapshot(
+        Arrays.setAll(result, i -> new JournalBlockSnapshot(
                     snapshots[i].index(),
                     snapshots[i].ownerFileId(),
                     snapshots[i].nextBlockIndex(),
-                    snapshots[i].systemReserved());
-        }
+                    snapshots[i].systemReserved()));
         return result;
     }
 
     private long deriveNextNodeNumber(FileSystemCatalog catalog) {
-        long maxNodeNumber = 0L;
-        FsNode[] nodes = catalog.getAllNodesSnapshot();
-        for (FsNode node : nodes) {
-            maxNodeNumber = Math.max(maxNodeNumber, extractNumericSuffix(node.getId(), "NODE-"));
-        }
-        return Math.max(1L, maxNodeNumber + 1L);
+        return deriveNextNumber(catalog, true);
     }
 
     private long deriveNextColorNumber(FileSystemCatalog catalog) {
-        long maxColorNumber = 0L;
-        FsNode[] nodes = catalog.getAllNodesSnapshot();
-        for (FsNode node : nodes) {
-            if (node instanceof FileNode file && file.getColorId() != null) {
-                maxColorNumber = Math.max(maxColorNumber, extractNumericSuffix(file.getColorId(), "COLOR-"));
-            }
-        }
-        return Math.max(1L, maxColorNumber + 1L);
+        return deriveNextNumber(catalog, false);
     }
 
     private long extractNumericSuffix(String value, String prefix) {
@@ -515,21 +487,22 @@ public final class SystemStateMapper {
         }
     }
 
-    private FsNode findNodeById(Object[] nodes, String nodeId) {
-        for (Object object : nodes) {
-            FsNode node = (FsNode) object;
-            if (node.getId().equals(nodeId)) {
-                return node;
-            }
-        }
-        return null;
-    }
-
     private DirectoryNode requireDirectoryNode(FsNode node) {
         if (!(node instanceof DirectoryNode directory)) {
             String nodeType = (node == null) ? "null" : node.getType().name();
             throw new IllegalArgumentException("expected directory node but found: " + nodeType);
         }
         return directory;
+    }
+
+    private long deriveNextNumber(FileSystemCatalog catalog, boolean nodeIds) {
+        long maxNumber = 0L;
+        for (FsNode node : catalog.getAllNodesSnapshot()) {
+            String candidate = nodeIds
+                    ? node.getId()
+                    : node instanceof FileNode file ? file.getColorId() : null;
+            maxNumber = Math.max(maxNumber, extractNumericSuffix(candidate, nodeIds ? "NODE-" : "COLOR-"));
+        }
+        return Math.max(1L, maxNumber + 1L);
     }
 }

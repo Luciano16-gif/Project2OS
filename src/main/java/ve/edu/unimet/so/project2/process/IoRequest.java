@@ -2,59 +2,42 @@ package ve.edu.unimet.so.project2.process;
 
 import ve.edu.unimet.so.project2.filesystem.FsNodeType;
 
-public final class IoRequest {
+public record IoRequest(
+        String requestId,
+        String processId,
+        IoOperationType operationType,
+        FsNodeType targetNodeType,
+        String targetPath,
+        String targetNodeId,
+        int targetBlock,
+        int requestedSizeInBlocks,
+        String issuerUserId,
+        long arrivalOrder) {
 
-    private final String requestId;
-    private final String processId;
-    private final IoOperationType operationType;
-    private final FsNodeType targetNodeType;
-    private final String targetPath;
-    private final String targetNodeId;
-    private final int targetBlock;
-    private final int requestedSizeInBlocks;
-    private final String issuerUserId;
-    private final long arrivalOrder;
-
-    public IoRequest(
-            String requestId,
-            String processId,
-            IoOperationType operationType,
-            FsNodeType targetNodeType,
-            String targetPath,
-            String targetNodeId,
-            int targetBlock,
-            int requestedSizeInBlocks,
-            String issuerUserId,
-            long arrivalOrder) {
-        this.requestId = requireNonBlank(requestId, "requestId");
-        this.processId = requireNonBlank(processId, "processId");
+    public IoRequest {
+        requestId = requireNonBlank(requestId, "requestId");
+        processId = requireNonBlank(processId, "processId");
         if (operationType == null) {
             throw new IllegalArgumentException("operationType cannot be null");
         }
         if (targetNodeType == null) {
             throw new IllegalArgumentException("targetNodeType cannot be null");
         }
-        this.targetPath = requireNonBlank(targetPath, "targetPath");
-        this.targetNodeId = normalizeOptional(targetNodeId);
+        targetPath = requireNonBlank(targetPath, "targetPath");
+        targetNodeId = normalizeOptional(targetNodeId);
+        issuerUserId = requireNonBlank(issuerUserId, "issuerUserId");
         if (targetBlock < 0) {
             throw new IllegalArgumentException("targetBlock cannot be negative");
         }
         if (requestedSizeInBlocks < 0) {
             throw new IllegalArgumentException("requestedSizeInBlocks cannot be negative");
         }
-        this.issuerUserId = requireNonBlank(issuerUserId, "issuerUserId");
         if (arrivalOrder < 0) {
             throw new IllegalArgumentException("arrivalOrder cannot be negative");
         }
 
         validateRequestedSize(operationType, targetNodeType, requestedSizeInBlocks);
-        validateTargetBinding(operationType, this.targetNodeId);
-
-        this.operationType = operationType;
-        this.targetNodeType = targetNodeType;
-        this.targetBlock = targetBlock;
-        this.requestedSizeInBlocks = requestedSizeInBlocks;
-        this.arrivalOrder = arrivalOrder;
+        validateTargetBinding(operationType, targetNodeId);
     }
 
     public String getRequestId() {
@@ -131,11 +114,9 @@ public final class IoRequest {
         if (operationType != IoOperationType.CREATE) {
             return;
         }
-
         if (targetNodeType == FsNodeType.FILE && requestedSizeInBlocks <= 0) {
             throw new IllegalArgumentException("CREATE file requests must request at least one block");
         }
-
         if (targetNodeType == FsNodeType.DIRECTORY && requestedSizeInBlocks != 0) {
             throw new IllegalArgumentException("CREATE directory requests must use zero requested blocks");
         }
@@ -145,7 +126,6 @@ public final class IoRequest {
         if (operationType == IoOperationType.CREATE) {
             return;
         }
-
         if (targetNodeId == null) {
             throw new IllegalArgumentException("non-CREATE requests must reference an existing targetNodeId");
         }

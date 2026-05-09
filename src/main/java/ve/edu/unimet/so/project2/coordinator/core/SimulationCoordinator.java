@@ -1,15 +1,10 @@
 package ve.edu.unimet.so.project2.coordinator.core;
 
 import java.nio.file.Path;
-import java.util.concurrent.CountDownLatch;
+import java.util.function.Predicate;
 import ve.edu.unimet.so.project2.application.ApplicationIntentPlanner;
 import ve.edu.unimet.so.project2.application.ApplicationOperationIntent;
-import ve.edu.unimet.so.project2.application.CreateDirectoryIntent;
-import ve.edu.unimet.so.project2.application.CreateFileIntent;
-import ve.edu.unimet.so.project2.application.DeleteIntent;
 import ve.edu.unimet.so.project2.application.PermissionService;
-import ve.edu.unimet.so.project2.application.ReadIntent;
-import ve.edu.unimet.so.project2.application.RenameIntent;
 import ve.edu.unimet.so.project2.application.SimulationApplicationState;
 import ve.edu.unimet.so.project2.application.SwitchSessionIntent;
 import ve.edu.unimet.so.project2.coordinator.channel.CoordinatorChannels;
@@ -22,15 +17,14 @@ import ve.edu.unimet.so.project2.coordinator.snapshot.SimulationSnapshotFactory;
 import ve.edu.unimet.so.project2.coordinator.state.CoordinatorProcessStore;
 import ve.edu.unimet.so.project2.coordinator.state.ProcessExecutionContext;
 import ve.edu.unimet.so.project2.datastructures.LinkedQueue;
-import ve.edu.unimet.so.project2.disk.DiskBlock;
 import ve.edu.unimet.so.project2.disk.DiskHead;
 import ve.edu.unimet.so.project2.disk.DiskHeadDirection;
 import ve.edu.unimet.so.project2.disk.SimulatedDisk;
-import ve.edu.unimet.so.project2.filesystem.FileNode;
 import ve.edu.unimet.so.project2.filesystem.FsNode;
 import ve.edu.unimet.so.project2.journal.JournalEntry;
 import ve.edu.unimet.so.project2.journal.JournalManager;
 import ve.edu.unimet.so.project2.journal.undo.CreateFileUndoData;
+import ve.edu.unimet.so.project2.journal.undo.JournalUndoData;
 import ve.edu.unimet.so.project2.journal.undo.UpdateRenameUndoData;
 import ve.edu.unimet.so.project2.locking.LockAcquireResult;
 import ve.edu.unimet.so.project2.locking.LockReleaseResult;
@@ -68,6 +62,9 @@ public final class SimulationCoordinator {
     private final JournalRecoveryService journalRecoveryService;
     private final ScenarioLoader scenarioLoader;
     private final SystemEventLog eventLog;
+    private final DiskAllocationConsistencyService diskAllocationConsistencyService;
+    private final ScenarioProcessStager scenarioProcessStager;
+    private final ApplicationIntentDescriptor applicationIntentDescriptor;
 
     private volatile SimulationSnapshot latestSnapshot;
 
@@ -121,7 +118,10 @@ public final class SimulationCoordinator {
         if (applicationState == null) {
             throw new IllegalArgumentException("applicationState cannot be null");
         }
-        this.disk = copyDisk(disk);
+        this.diskAllocationConsistencyService = new DiskAllocationConsistencyService();
+        this.scenarioProcessStager = new ScenarioProcessStager();
+        this.applicationIntentDescriptor = new ApplicationIntentDescriptor();
+        this.disk = diskAllocationConsistencyService.copyOf(disk);
         this.lockTable = lockTable;
         this.journalManager = journalManager;
         this.diskScheduler = new DiskScheduler();
@@ -129,7 +129,7 @@ public final class SimulationCoordinator {
         this.processStore = new CoordinatorProcessStore();
         this.snapshotFactory = new SimulationSnapshotFactory();
         this.applicationState = applicationState.deepCopy();
-        synchronizeDiskWithApplicationState();
+        diskAllocationConsistencyService.synchronizeDiskWithCatalog(this.applicationState, this.disk);
         this.applicationIntentPlanner = new ApplicationIntentPlanner(
                 this.applicationState,
                 this.disk,
@@ -167,8 +167,8 @@ public final class SimulationCoordinator {
 
         shutdownRequested = false;
         acceptingCommands = true;
-        coordinatorThread = new Thread(this::runCoordinatorLoop, "SimulationCoordinatorThread");
-        diskThread = new Thread(this::runDiskLoop, "DiskExecutionThread");
+        coordinatorThread = new Thread(new CoordinatorLoopWorker(this), "SimulationCoordinatorThread");
+        diskThread = new Thread(new DiskExecutionWorker(this), "DiskExecutionThread");
         started = true;
         coordinatorThread.start();
         diskThread.start();
@@ -198,18 +198,14 @@ public final class SimulationCoordinator {
         if (command == null) {
             throw new IllegalArgumentException("command cannot be null");
         }
-        requireStartedAndAcceptingCommands();
-        ensureNotAwaitingRecovery();
-        channels.enqueueCommand(new SubmitOperationCoordinatorCommand(command));
+        enqueueOperationalCommand(() -> enqueueSubmittedOperation(command));
     }
 
     public void submitIntent(ApplicationOperationIntent intent) {
         if (intent == null) {
             throw new IllegalArgumentException("intent cannot be null");
         }
-        requireStartedAndAcceptingCommands();
-        ensureNotAwaitingRecovery();
-        channels.enqueueCommand(new SubmitApplicationIntentCoordinatorCommand(intent));
+        enqueueOperationalCommand(() -> enqueueApplicationIntent(intent));
     }
 
     public void switchSession(String userId) {
@@ -223,27 +219,21 @@ public final class SimulationCoordinator {
         if (policy == null) {
             throw new IllegalArgumentException("policy cannot be null");
         }
-        requireStartedAndAcceptingCommands();
-        ensureNotAwaitingRecovery();
-        channels.enqueueCommand(new ChangePolicyCoordinatorCommand(policy));
+        enqueueOperationalCommand(() -> applyPolicyChange(policy));
     }
 
     public void changeHeadDirection(DiskHeadDirection direction) {
         if (direction == null) {
             throw new IllegalArgumentException("direction cannot be null");
         }
-        requireStartedAndAcceptingCommands();
-        ensureNotAwaitingRecovery();
-        channels.enqueueCommand(new ChangeDirectionCoordinatorCommand(direction));
+        enqueueOperationalCommand(() -> applyHeadDirectionChange(direction));
     }
 
     public void changeExecutionDelay(long delayMillis) {
         if (delayMillis < 0L) {
             throw new IllegalArgumentException("delayMillis cannot be negative");
         }
-        requireStartedAndAcceptingCommands();
-        ensureNotAwaitingRecovery();
-        channels.enqueueCommand(new ChangeExecutionDelayCoordinatorCommand(delayMillis));
+        enqueueOperationalCommand(() -> applyExecutionDelayChange(delayMillis));
     }
 
     public long getExecutionDelayMillis() {
@@ -251,9 +241,7 @@ public final class SimulationCoordinator {
     }
 
     public void setStepModeEnabled(boolean enabled) {
-        requireStartedAndAcceptingCommands();
-        ensureNotAwaitingRecovery();
-        channels.enqueueCommand(new SetStepModeCoordinatorCommand(enabled));
+        enqueueOperationalCommand(() -> applyStepModeChange(enabled));
     }
 
     public boolean isStepModeEnabled() {
@@ -261,9 +249,7 @@ public final class SimulationCoordinator {
     }
 
     public void stepSimulationOnce() {
-        requireStartedAndAcceptingCommands();
-        ensureNotAwaitingRecovery();
-        channels.enqueueCommand(new StepSimulationCoordinatorCommand());
+        enqueueOperationalCommand(this::queueManualStep);
     }
 
     public boolean isSimulatedFailureArmed() {
@@ -279,95 +265,37 @@ public final class SimulationCoordinator {
     }
 
     public void saveSystem(Path path) {
-        requireStartedAndAcceptingCommands();
-        runSynchronously(new SaveSystemCoordinatorCommand(path));
+        runSynchronousCommand(() -> saveSystemState(path));
     }
 
     public void loadSystem(Path path) {
-        requireStartedAndAcceptingCommands();
-        runSynchronously(new LoadSystemCoordinatorCommand(path));
+        runSynchronousCommand(() -> loadPersistedSystemState(path));
     }
 
     public void loadScenario(Path path) {
-        requireStartedAndAcceptingCommands();
-        runSynchronously(new LoadScenarioCoordinatorCommand(path));
+        runSynchronousCommand(() -> loadExternalScenario(path));
     }
 
     public void armSimulatedFailure() {
-        requireStartedAndAcceptingCommands();
-        runSynchronously(new ArmSimulatedFailureCoordinatorCommand());
+        runSynchronousCommand(this::armSimulatedFailureInternal);
     }
 
     public void recoverPendingJournalEntries() {
-        requireStartedAndAcceptingCommands();
-        runSynchronously(new RecoverPendingJournalCoordinatorCommand());
+        runSynchronousCommand(this::recoverPendingJournalEntriesInMemory);
     }
 
     public void resetSimulation() {
-        requireStartedAndAcceptingCommands();
-        runSynchronously(new ResetSimulationCoordinatorCommand(disk.getTotalBlocks()));
+        runSynchronousCommand(() -> resetSimulationState(disk.getTotalBlocks()));
     }
 
     public void resetSimulation(int totalBlocks) {
         if (totalBlocks <= 0) {
             throw new IllegalArgumentException("totalBlocks must be > 0");
         }
-        requireStartedAndAcceptingCommands();
-        runSynchronously(new ResetSimulationCoordinatorCommand(totalBlocks));
+        runSynchronousCommand(() -> resetSimulationState(totalBlocks));
     }
 
-    private void runCoordinatorLoop() {
-        while (true) {
-            boolean worked = false;
-
-            CoordinatorCommand command = channels.pollCommand();
-            if (command != null) {
-                executeCommandSafely(command);
-                worked = true;
-            }
-
-            boolean canAdvanceSimulation = consumeStepPermitIfNeeded();
-
-            if (canAdvanceSimulation) {
-                DiskServiceResult diskResult = channels.pollCompletedDiskResult();
-                if (diskResult != null) {
-                    finishRunningProcess(diskResult);
-                    worked = true;
-                }
-
-                if (reconcileBlockedLockWaiters()) {
-                    worked = true;
-                }
-
-                if (materializePendingSubmissions()) {
-                    worked = true;
-                }
-
-                if (processStore.getRunningProcess() == null && tryDispatchNextReady()) {
-                    worked = true;
-                }
-            }
-
-            publishSnapshot();
-
-            if (shutdownRequested
-                    && processStore.getRunningProcess() == null
-                    && channels.isCommandQueueEmpty()
-                    && !channels.hasPendingDiskItems()) {
-                break;
-            }
-
-            if (worked && executionDelayMillis > 0L) {
-                sleepQuietly(executionDelayMillis);
-            } else if (!worked) {
-                sleepQuietly(2L);
-            }
-        }
-
-        publishSnapshot();
-    }
-
-    private boolean consumeStepPermitIfNeeded() {
+    boolean consumeStepPermitIfNeeded() {
         if (!stepModeEnabled) {
             return true;
         }
@@ -378,28 +306,7 @@ public final class SimulationCoordinator {
         return true;
     }
 
-    private void runDiskLoop() {
-        while (true) {
-            DiskTask task = channels.awaitNextDiskTask();
-            if (task == null) {
-                if (shutdownRequested) {
-                    break;
-                }
-                continue;
-            }
-
-            recordEvent("DISK", "serviced request " + task.getRequestId() + " for process " + task.getProcessId());
-            channels.publishCompletedDiskResult(new DiskServiceResult(
-                    task.getProcessId(),
-                    task.getRequestId(),
-                    task.getPreviousHeadBlock(),
-                    task.getNewHeadBlock(),
-                    task.getTraveledDistance(),
-                    Thread.currentThread().getName()));
-        }
-    }
-
-    private boolean tryDispatchNextReady() {
+    boolean tryDispatchNextReady() {
         ProcessControlBlock[] readySnapshot = processStore.getReadySnapshot();
         if (readySnapshot.length == 0) {
             return false;
@@ -664,7 +571,7 @@ public final class SimulationCoordinator {
         return true;
     }
 
-    private void finishRunningProcess(DiskServiceResult diskResult) {
+    void finishRunningProcess(DiskServiceResult diskResult) {
         ProcessControlBlock runningProcess = processStore.getRunningProcess();
         if (runningProcess == null) {
             throw new IllegalStateException("received disk result without a running process");
@@ -735,13 +642,9 @@ public final class SimulationCoordinator {
     }
 
     private void releaseReservedBlocksIfNeeded(ProcessExecutionContext context) {
-        if (!context.getCommand().requiresJournal()) {
-            return;
+        if (context.getCommand().requiresJournal()) {
+            releaseReservedBlocksForUndoData(context.getCommand().getPreparedJournalData().getUndoData());
         }
-        if (!(context.getCommand().getPreparedJournalData().getUndoData() instanceof CreateFileUndoData undoData)) {
-            return;
-        }
-        applicationState.releaseReservedBlockIndexes(undoData.getAllocatedBlockIndexesSnapshot());
     }
 
     private void releaseProcessLock(ProcessControlBlock process) {
@@ -778,7 +681,7 @@ public final class SimulationCoordinator {
         recordEvent("LOCK", "process " + process.getProcessId() + " reactivated from lock wait");
     }
 
-    private boolean reconcileBlockedLockWaiters() {
+    boolean reconcileBlockedLockWaiters() {
         ProcessControlBlock[] blockedSnapshot = processStore.getBlockedSnapshot();
         boolean changed = false;
 
@@ -816,7 +719,7 @@ public final class SimulationCoordinator {
         return changed;
     }
 
-    private void publishSnapshot() {
+    void publishSnapshot() {
         refreshDiskOccupancyMarkers();
         latestSnapshot = snapshotFactory.build(
                 activePolicy,
@@ -830,7 +733,7 @@ public final class SimulationCoordinator {
                 maxConcurrentDiskTasksObserved);
     }
 
-    private void saveSystemState(Path path) {
+    void saveSystemState(Path path) {
         ensureCoordinatorIdleForAdminOperation();
         systemPersistenceService.save(
                 path,
@@ -841,36 +744,36 @@ public final class SimulationCoordinator {
         recordEvent("PERSISTENCE", "system saved to " + path);
     }
 
-    private void loadPersistedSystemState(Path path) {
+    void loadPersistedSystemState(Path path) {
         ensureCoordinatorIdleForAdminOperation();
+        boolean previousStepModeEnabled = stepModeEnabled;
         LoadedSystemState loadedState = systemPersistenceService.load(path);
         journalRecoveryService.recoverPendingEntries(
                 loadedState.applicationState(),
                 loadedState.disk(),
                 loadedState.journalManager());
         loadedState.applicationState().realignGeneratedIdsToCatalog();
-        validatePersistedStateCoherence(
-                loadedState.disk(),
-                loadedState.applicationState());
+        diskAllocationConsistencyService.validateDiskMatchesCatalog(
+                loadedState.applicationState(),
+                loadedState.disk());
         applyLoadedState(
                 loadedState.disk(),
                 loadedState.applicationState(),
                 loadedState.journalManager(),
                 loadedState.policy());
-        stepModeEnabled = true;
+        stepModeEnabled = previousStepModeEnabled;
         pendingStepPermits = 0;
         recordEvent("PERSISTENCE", "system loaded from " + path);
         publishSnapshot();
     }
 
-    private void loadExternalScenario(Path path) {
+    void loadExternalScenario(Path path) {
         ensureCoordinatorIdleForAdminOperation();
+        boolean previousStepModeEnabled = stepModeEnabled;
         LoadedScenarioState loadedScenarioState =
                 scenarioLoader.load(path, disk.getTotalBlocks(), disk.getHead().getDirection());
-        ScenarioOperationIntent[] scenarioIntents = loadedScenarioState.scenarioIntents();
-        validateScenarioIntents(scenarioIntents, loadedScenarioState.disk());
-        ScenarioReadyRegistration[] stagedRegistrations = buildScenarioReadyRegistrations(
-                scenarioIntents,
+        ScenarioReadyRegistration[] stagedRegistrations = scenarioProcessStager.stageReadyProcesses(
+                loadedScenarioState.scenarioIntents(),
                 loadedScenarioState.applicationState(),
                 loadedScenarioState.disk());
         applyLoadedState(
@@ -885,13 +788,13 @@ public final class SimulationCoordinator {
         }
         nextArrivalOrder = stagedRegistrations.length;
         nextTick = stagedRegistrations.length * 2L;
-        stepModeEnabled = true;
+        stepModeEnabled = previousStepModeEnabled;
         pendingStepPermits = 0;
         recordEvent("SCENARIO", "scenario loaded from " + path + " with " + stagedRegistrations.length + " requests");
         publishSnapshot();
     }
 
-    private void recoverPendingJournalEntriesInMemory() {
+    void recoverPendingJournalEntriesInMemory() {
         ensureCoordinatorIdleForAdminOperation();
         if (recoveryQuarantineActive && !lockTable.isEmpty()) {
             lockTable.clear();
@@ -905,7 +808,7 @@ public final class SimulationCoordinator {
         publishSnapshot();
     }
 
-    private void resetSimulationState(int totalBlocks) {
+    void resetSimulationState(int totalBlocks) {
         ensureCoordinatorIdleForAdminOperation();
         if (totalBlocks <= 0) {
             throw new IllegalArgumentException("totalBlocks must be > 0");
@@ -925,87 +828,6 @@ public final class SimulationCoordinator {
         pendingStepPermits = 0;
         recordEvent("SYSTEM", "simulation reset to defaults with " + totalBlocks + " blocks");
         publishSnapshot();
-    }
-
-    private void validateScenarioIntents(ScenarioOperationIntent[] intents, SimulatedDisk targetDisk) {
-        for (int i = 0; i < intents.length; i++) {
-            ScenarioOperationIntent intent = intents[i];
-            if (intent == null) {
-                throw new IllegalArgumentException("intent at index " + i + " cannot be null");
-            }
-            if (!targetDisk.isValidIndex(intent.getStartBlock())) {
-                throw new IllegalArgumentException("targetBlock is out of disk range: " + intent.getStartBlock());
-            }
-        }
-    }
-
-    private ScenarioReadyRegistration[] buildScenarioReadyRegistrations(
-            ScenarioOperationIntent[] intents,
-            SimulationApplicationState targetApplicationState,
-            SimulatedDisk targetDisk) {
-        ScenarioReadyRegistration[] registrations = new ScenarioReadyRegistration[intents.length];
-        long arrivalOrder = 0L;
-        long creationTick = 0L;
-        for (int i = 0; i < intents.length; i++) {
-            registrations[i] = new ScenarioReadyRegistration(
-                    createReadyScenarioProcess(
-                            intents[i],
-                            "SCN-REQ-" + (i + 1),
-                            "SCN-PROC-" + (i + 1),
-                            targetApplicationState,
-                            targetDisk,
-                            arrivalOrder++,
-                            creationTick),
-                    intents[i]);
-            creationTick += 2L;
-        }
-        return registrations;
-    }
-
-    private ProcessControlBlock createReadyScenarioProcess(
-            ScenarioOperationIntent intent,
-            String requestId,
-            String processId,
-            SimulationApplicationState targetApplicationState,
-            SimulatedDisk targetDisk,
-            long arrivalOrder,
-            long creationTick) {
-        if (intent == null) {
-            throw new IllegalArgumentException("intent cannot be null");
-        }
-        if (!targetDisk.isValidIndex(intent.getStartBlock())) {
-            throw new IllegalArgumentException("targetBlock is out of disk range: " + intent.getStartBlock());
-        }
-
-        String ownerUserId = targetApplicationState.getSessionContext().getCurrentUserId();
-        String placeholderTargetPath = intent.describeTargetPath(targetApplicationState, targetDisk);
-        String placeholderTargetNodeId = "SCENARIO-POS-" + intent.getStartBlock();
-        LockType requiredLockType = intent.getOperationType() == IoOperationType.READ
-                ? LockType.SHARED
-                : (intent.getOperationType() == IoOperationType.CREATE ? null : LockType.EXCLUSIVE);
-        IoRequest request = new IoRequest(
-                requestId,
-                processId,
-                intent.getOperationType(),
-                ve.edu.unimet.so.project2.filesystem.FsNodeType.FILE,
-                placeholderTargetPath,
-                placeholderTargetNodeId,
-                intent.getStartBlock(),
-                intent.getRequestedSizeInBlocks(),
-                ownerUserId,
-                arrivalOrder);
-        ProcessControlBlock process = new ProcessControlBlock(
-                processId,
-                ownerUserId,
-                request,
-                ve.edu.unimet.so.project2.filesystem.FsNodeType.FILE,
-                placeholderTargetNodeId,
-                placeholderTargetPath,
-                intent.getStartBlock(),
-                requiredLockType,
-                creationTick);
-        process.markReady(creationTick + 1L);
-        return process;
     }
 
     private void applyLoadedState(
@@ -1053,194 +875,13 @@ public final class SimulationCoordinator {
         }
     }
 
-    private void synchronizeDiskWithApplicationState() {
-        FileNode[] files = getFileSnapshot(applicationState);
-        boolean[] claimedBlocks = new boolean[disk.getTotalBlocks()];
-        boolean[] reservedFirstBlocks = buildReservedFirstBlocks(files, disk);
-        for (FileNode file : files) {
-            synchronizeFileAllocation(file, claimedBlocks, reservedFirstBlocks, disk);
-        }
-        ensureNoOrphanedOccupiedBlocks(claimedBlocks, disk);
-    }
-
-    private void validatePersistedStateCoherence(
-            SimulatedDisk persistedDisk,
-            SimulationApplicationState persistedApplicationState) {
-        FileNode[] files = getFileSnapshot(persistedApplicationState);
-        boolean[] claimedBlocks = new boolean[persistedDisk.getTotalBlocks()];
-        buildReservedFirstBlocks(files, persistedDisk);
-        for (FileNode file : files) {
-            validateExistingFileAllocation(file, claimedBlocks, persistedDisk);
-        }
-        ensureNoOrphanedOccupiedBlocks(claimedBlocks, persistedDisk);
-    }
-
-    private FileNode[] getFileSnapshot(SimulationApplicationState sourceApplicationState) {
-        FsNode[] nodes = sourceApplicationState.getFileSystemCatalog().getAllNodesSnapshot();
-        int fileCount = 0;
-        for (FsNode node : nodes) {
-            if (node instanceof FileNode) {
-                fileCount++;
-            }
-        }
-
-        FileNode[] files = new FileNode[fileCount];
-        int index = 0;
-        for (FsNode node : nodes) {
-            if (node instanceof FileNode file) {
-                files[index++] = file;
-            }
-        }
-        return files;
-    }
-
-    private boolean[] buildReservedFirstBlocks(FileNode[] files, SimulatedDisk targetDisk) {
-        boolean[] reservedFirstBlocks = new boolean[targetDisk.getTotalBlocks()];
-        for (FileNode file : files) {
-            int firstBlockIndex = file.getFirstBlockIndex();
-            if (!targetDisk.isValidIndex(firstBlockIndex)) {
-                throw new IllegalArgumentException("file firstBlockIndex is out of disk range: " + file.getId());
-            }
-            if (reservedFirstBlocks[firstBlockIndex]) {
-                throw new IllegalArgumentException("duplicate file firstBlockIndex detected: " + firstBlockIndex);
-            }
-            reservedFirstBlocks[firstBlockIndex] = true;
-        }
-        return reservedFirstBlocks;
-    }
-
-    private void synchronizeFileAllocation(
-            FileNode file,
-            boolean[] claimedBlocks,
-            boolean[] reservedFirstBlocks,
-            SimulatedDisk targetDisk) {
-        int firstBlockIndex = file.getFirstBlockIndex();
-        DiskBlock firstBlock = targetDisk.getBlock(firstBlockIndex);
-        if (firstBlock.isFree()) {
-            hydrateFileAllocation(file, claimedBlocks, reservedFirstBlocks, targetDisk);
-            return;
-        }
-        validateExistingFileAllocation(file, claimedBlocks, targetDisk);
-    }
-
-    private void hydrateFileAllocation(
-            FileNode file,
-            boolean[] claimedBlocks,
-            boolean[] reservedFirstBlocks,
-            SimulatedDisk targetDisk) {
-        int[] chain = new int[file.getSizeInBlocks()];
-        chain[0] = file.getFirstBlockIndex();
-        markClaimed(chain[0], file, claimedBlocks);
-
-        int searchStart = (chain[0] + 1) % targetDisk.getTotalBlocks();
-        for (int i = 1; i < chain.length; i++) {
-            int blockIndex = findNextFreeUnclaimedBlock(searchStart, claimedBlocks, reservedFirstBlocks, targetDisk);
-            if (blockIndex == SimulatedDisk.NO_FREE_BLOCK) {
-                throw new IllegalArgumentException("unable to hydrate disk allocation for file: " + file.getId());
-            }
-            chain[i] = blockIndex;
-            markClaimed(blockIndex, file, claimedBlocks);
-            searchStart = (blockIndex + 1) % targetDisk.getTotalBlocks();
-        }
-
-        for (int i = 0; i < chain.length; i++) {
-            int nextBlockIndex = (i == chain.length - 1) ? DiskBlock.NO_NEXT_BLOCK : chain[i + 1];
-            targetDisk.allocateBlock(chain[i], file.getId(), nextBlockIndex, file.isSystemFile());
-        }
-    }
-
-    private void validateExistingFileAllocation(
-            FileNode file,
-            boolean[] claimedBlocks,
-            SimulatedDisk targetDisk) {
-        int currentBlockIndex = file.getFirstBlockIndex();
-        for (int i = 0; i < file.getSizeInBlocks(); i++) {
-            if (!targetDisk.isValidIndex(currentBlockIndex)) {
-                throw new IllegalArgumentException("disk chain points outside disk for file: " + file.getId());
-            }
-
-            DiskBlock block = targetDisk.getBlock(currentBlockIndex);
-            if (block.isFree()) {
-                throw new IllegalArgumentException("disk chain is incomplete for file: " + file.getId());
-            }
-            if (!file.getId().equals(block.getOwnerFileId())) {
-                throw new IllegalArgumentException("disk block owner mismatch for file: " + file.getId());
-            }
-            if (block.isSystemReserved() != file.isSystemFile()) {
-                throw new IllegalArgumentException("disk block system flag mismatch for file: " + file.getId());
-            }
-
-            markClaimed(currentBlockIndex, file, claimedBlocks);
-
-            if (i == file.getSizeInBlocks() - 1) {
-                if (block.getNextBlockIndex() != DiskBlock.NO_NEXT_BLOCK) {
-                    throw new IllegalArgumentException("disk chain length mismatch for file: " + file.getId());
-                }
-                return;
-            }
-
-            currentBlockIndex = block.getNextBlockIndex();
-        }
-    }
-
-    private int findNextFreeUnclaimedBlock(
-            int startIndex,
-            boolean[] claimedBlocks,
-            boolean[] reservedFirstBlocks,
-            SimulatedDisk targetDisk) {
-        for (int offset = 0; offset < targetDisk.getTotalBlocks(); offset++) {
-            int candidate = (startIndex + offset) % targetDisk.getTotalBlocks();
-            if (!claimedBlocks[candidate]
-                    && !reservedFirstBlocks[candidate]
-                    && targetDisk.getBlock(candidate).isFree()) {
-                return candidate;
-            }
-        }
-        return SimulatedDisk.NO_FREE_BLOCK;
-    }
-
-    private void markClaimed(int blockIndex, FileNode file, boolean[] claimedBlocks) {
-        if (claimedBlocks[blockIndex]) {
-            throw new IllegalArgumentException("duplicate block claim detected for file: " + file.getId());
-        }
-        claimedBlocks[blockIndex] = true;
-    }
-
-    private void ensureNoOrphanedOccupiedBlocks(boolean[] claimedBlocks, SimulatedDisk targetDisk) {
-        for (int blockIndex = 0; blockIndex < targetDisk.getTotalBlocks(); blockIndex++) {
-            if (!claimedBlocks[blockIndex] && !targetDisk.getBlock(blockIndex).isFree()) {
-                throw new IllegalArgumentException(
-                        "disk contains occupied block without filesystem owner: " + blockIndex);
-            }
-        }
-    }
-
-    private SimulatedDisk copyDisk(SimulatedDisk sourceDisk) {
-        DiskHead sourceHead = sourceDisk.getHead();
-        SimulatedDisk copy = new SimulatedDisk(
-                sourceDisk.getTotalBlocks(),
-                sourceHead.getCurrentBlock(),
-                sourceHead.getDirection());
-        for (int blockIndex = 0; blockIndex < sourceDisk.getTotalBlocks(); blockIndex++) {
-            DiskBlock sourceBlock = sourceDisk.getBlock(blockIndex);
-            if (!sourceBlock.isFree()) {
-                copy.allocateBlock(
-                        blockIndex,
-                        sourceBlock.getOwnerFileId(),
-                        sourceBlock.getNextBlockIndex(),
-                        sourceBlock.isSystemReserved());
-            }
-        }
-        return copy;
-    }
-
-    private boolean materializePendingSubmissions() {
+    boolean materializePendingSubmissions() {
         boolean changed = false;
 
         while (!pendingSubmissions.isEmpty()) {
             PendingSubmission next = pendingSubmissions.peek();
             pendingSubmissions.dequeue();
-            if (next.intent != null) {
+            if (next.intent() != null) {
                 boolean completed = materializeIntentSubmission(next);
                 changed = true;
                 if (!completed) {
@@ -1251,9 +892,9 @@ public final class SimulationCoordinator {
             }
 
             try {
-                handleSubmitOperation(next.command);
+                handleSubmitOperation(next.command());
             } catch (RuntimeException exception) {
-                processStore.addRejectedTerminatedProcess(next.command, exception.getMessage());
+                processStore.addRejectedTerminatedProcess(next.command(), exception.getMessage());
             }
             changed = true;
         }
@@ -1263,22 +904,22 @@ public final class SimulationCoordinator {
 
     private boolean materializeIntentSubmission(PendingSubmission pendingIntent) {
         try {
-            if (pendingIntent.intent instanceof SwitchSessionIntent switchSessionIntent) {
+            if (pendingIntent.intent() instanceof SwitchSessionIntent switchSessionIntent) {
                 applicationState.getSessionContext().switchTo(
                         applicationState.getUserStore().requireById(switchSessionIntent.getTargetUserId()));
                 recordEvent("SESSION", "switched session to " + switchSessionIntent.getTargetUserId());
                 return true;
             }
 
-            ApplicationOperationIntent intent = pendingIntent.intent;
+            ApplicationOperationIntent intent = pendingIntent.intent();
             if (intent instanceof ScenarioOperationIntent scenarioOperationIntent) {
                 intent = scenarioOperationIntent.resolve(applicationState, disk);
             }
 
             PreparedOperationCommand command = applicationIntentPlanner.plan(
                     intent,
-                    pendingIntent.requestId,
-                    pendingIntent.processId);
+                    pendingIntent.requestId(),
+                    pendingIntent.processId());
             handleSubmitOperation(command);
             return true;
         } catch (RuntimeException exception) {
@@ -1287,15 +928,15 @@ public final class SimulationCoordinator {
                 return false;
             }
             processStore.addRejectedTerminatedProcess(
-                    pendingIntent.processId,
-                    pendingIntent.requestId,
-                    inferIntentOperationType(pendingIntent.intent),
-                    inferIntentOwnerUserId(pendingIntent.intent),
-                    inferIntentRequiredLockType(pendingIntent.intent),
-                    describeIntentTargetPath(pendingIntent.intent),
+                    pendingIntent.processId(),
+                    pendingIntent.requestId(),
+                    inferIntentOperationType(pendingIntent.intent()),
+                    inferIntentOwnerUserId(pendingIntent.intent()),
+                    inferIntentRequiredLockType(pendingIntent.intent()),
+                    describeIntentTargetPath(pendingIntent.intent()),
                     0,
                     exception.getMessage());
-            recordEvent("PROCESS", "rejected intent " + pendingIntent.processId + ": " + exception.getMessage());
+            recordEvent("PROCESS", "rejected intent " + pendingIntent.processId() + ": " + exception.getMessage());
             return true;
         }
     }
@@ -1309,45 +950,16 @@ public final class SimulationCoordinator {
                 && message.contains("node not found at path");
     }
 
-    private void executeCommandSafely(CoordinatorCommand command) {
+    void executeCommandSafely(CoordinatorCommand command) {
         try {
             command.execute();
         } catch (RuntimeException exception) {
-            if (command instanceof SubmitOperationCoordinatorCommand submitCommand) {
-                processStore.addRejectedTerminatedProcess(submitCommand.command, exception.getMessage());
-                recordEvent("PROCESS", "rejected submitted operation "
-                        + submitCommand.command.getProcessId() + ": " + exception.getMessage());
-            }
+            recordEvent("COMMAND", "command execution failed: " + exception.getMessage());
         }
     }
 
     private String describeIntentTargetPath(ApplicationOperationIntent intent) {
-        if (intent instanceof ScenarioOperationIntent scenarioOperationIntent) {
-            return scenarioOperationIntent.describeTargetPath(applicationState, disk);
-        }
-        if (intent instanceof CreateFileIntent createFileIntent) {
-            return buildIntentChildPath(createFileIntent.getParentDirectoryPath(), createFileIntent.getFileName());
-        }
-        if (intent instanceof CreateDirectoryIntent createDirectoryIntent) {
-            return buildIntentChildPath(createDirectoryIntent.getParentDirectoryPath(), createDirectoryIntent.getDirectoryName());
-        }
-        if (intent instanceof ReadIntent readIntent) {
-            return readIntent.getTargetPath();
-        }
-        if (intent instanceof RenameIntent renameIntent) {
-            return renameIntent.getTargetPath();
-        }
-        if (intent instanceof DeleteIntent deleteIntent) {
-            return deleteIntent.getTargetPath();
-        }
-        return "/";
-    }
-
-    private String buildIntentChildPath(String parentPath, String childName) {
-        if ("/".equals(parentPath)) {
-            return "/" + childName;
-        }
-        return parentPath + "/" + childName;
+        return applicationIntentDescriptor.describeTargetPath(intent, applicationState, disk);
     }
 
     private void validateTargetBlockInRange(PreparedOperationCommand command) {
@@ -1357,40 +969,15 @@ public final class SimulationCoordinator {
     }
 
     private IoOperationType inferIntentOperationType(ApplicationOperationIntent intent) {
-        if (intent instanceof CreateFileIntent || intent instanceof CreateDirectoryIntent) {
-            return IoOperationType.CREATE;
-        }
-        if (intent instanceof ReadIntent) {
-            return IoOperationType.READ;
-        }
-        if (intent instanceof RenameIntent) {
-            return IoOperationType.UPDATE;
-        }
-        if (intent instanceof DeleteIntent) {
-            return IoOperationType.DELETE;
-        }
-        if (intent instanceof ScenarioOperationIntent scenarioOperationIntent) {
-            return scenarioOperationIntent.getOperationType();
-        }
-        return null;
+        return applicationIntentDescriptor.inferOperationType(intent);
     }
 
     private LockType inferIntentRequiredLockType(ApplicationOperationIntent intent) {
-        IoOperationType operationType = inferIntentOperationType(intent);
-        if (operationType == IoOperationType.READ) {
-            return LockType.SHARED;
-        }
-        if (operationType == IoOperationType.UPDATE || operationType == IoOperationType.DELETE) {
-            return LockType.EXCLUSIVE;
-        }
-        return null;
+        return applicationIntentDescriptor.inferRequiredLockType(intent);
     }
 
     private String inferIntentOwnerUserId(ApplicationOperationIntent intent) {
-        if (intent instanceof SwitchSessionIntent switchSessionIntent) {
-            return switchSessionIntent.getTargetUserId();
-        }
-        return applicationState.getSessionContext().getCurrentUserId();
+        return applicationIntentDescriptor.inferOwnerUserId(intent, applicationState);
     }
 
     private void refreshDiskOccupancyMarkers() {
@@ -1432,37 +1019,15 @@ public final class SimulationCoordinator {
     }
 
     private boolean pendingContainsRequestId(String requestId) {
-        final boolean[] found = new boolean[] {false};
-        pendingSubmissions.forEach(submission -> {
-            if (found[0]) {
-                return;
-            }
-            if (submission.command != null && requestId.equals(submission.command.getRequestId())) {
-                found[0] = true;
-                return;
-            }
-            if (requestId.equals(submission.requestId)) {
-                found[0] = true;
-            }
-        });
-        return found[0];
+        return pendingContains(submission ->
+                (submission.command() != null && requestId.equals(submission.command().getRequestId()))
+                        || requestId.equals(submission.requestId()));
     }
 
     private boolean pendingContainsProcessId(String processId) {
-        final boolean[] found = new boolean[] {false};
-        pendingSubmissions.forEach(submission -> {
-            if (found[0]) {
-                return;
-            }
-            if (submission.command != null && processId.equals(submission.command.getProcessId())) {
-                found[0] = true;
-                return;
-            }
-            if (processId.equals(submission.processId)) {
-                found[0] = true;
-            }
-        });
-        return found[0];
+        return pendingContains(submission ->
+                (submission.command() != null && processId.equals(submission.command().getProcessId()))
+                        || processId.equals(submission.processId()));
     }
 
     private void requireStartedAndAcceptingCommands() {
@@ -1498,21 +1063,21 @@ public final class SimulationCoordinator {
         pendingSubmissions.clear();
         for (Object object : pendingSnapshot) {
             PendingSubmission submission = (PendingSubmission) object;
-            if (submission.command != null) {
-                releaseReservedBlocksForCommand(submission.command);
-                processStore.addCancelledTerminatedProcess(submission.command, reason);
+            if (submission.command() != null) {
+                releaseReservedBlocksForCommand(submission.command());
+                processStore.addCancelledTerminatedProcess(submission.command(), reason);
                 continue;
             }
             processStore.addCancelledTerminatedProcess(
-                    submission.processId,
-                    submission.requestId,
-                    inferIntentOperationType(submission.intent),
-                    resolveCancelledIntentOwnerUserId(submission.intent),
-                    inferIntentRequiredLockType(submission.intent),
-                    describeIntentTargetPath(submission.intent),
+                    submission.processId(),
+                    submission.requestId(),
+                    inferIntentOperationType(submission.intent()),
+                    resolveCancelledIntentOwnerUserId(submission.intent()),
+                    inferIntentRequiredLockType(submission.intent()),
+                    describeIntentTargetPath(submission.intent()),
                     0,
                     reason);
-            advanceQueuedIntentCancellationState(submission.intent);
+            advanceQueuedIntentCancellationState(submission.intent());
         }
     }
 
@@ -1527,13 +1092,9 @@ public final class SimulationCoordinator {
     }
 
     private void releaseReservedBlocksForCommand(PreparedOperationCommand command) {
-        if (command == null || !command.requiresJournal()) {
-            return;
+        if (command != null && command.requiresJournal()) {
+            releaseReservedBlocksForUndoData(command.getPreparedJournalData().getUndoData());
         }
-        if (!(command.getPreparedJournalData().getUndoData() instanceof CreateFileUndoData undoData)) {
-            return;
-        }
-        applicationState.releaseReservedBlockIndexes(undoData.getAllocatedBlockIndexesSnapshot());
     }
 
     private String resolveCancelledIntentOwnerUserId(ApplicationOperationIntent intent) {
@@ -1573,12 +1134,54 @@ public final class SimulationCoordinator {
         }
     }
 
-    private void sleepQuietly(long millis) {
+    void sleepQuietly(long millis) {
         try {
             Thread.sleep(millis);
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    CoordinatorCommand pollNextCommand() {
+        return channels.pollCommand();
+    }
+
+    DiskServiceResult pollCompletedDiskResult() {
+        return channels.pollCompletedDiskResult();
+    }
+
+    boolean hasRunningProcess() {
+        return processStore.getRunningProcess() != null;
+    }
+
+    boolean shouldStopCoordinatorLoop() {
+        return shutdownRequested
+                && processStore.getRunningProcess() == null
+                && channels.isCommandQueueEmpty()
+                && !channels.hasPendingDiskItems();
+    }
+
+    long getExecutionDelayMillisForWorker() {
+        return executionDelayMillis;
+    }
+
+    boolean isShutdownRequestedForWorker() {
+        return shutdownRequested;
+    }
+
+    DiskTask awaitNextDiskTask() {
+        return channels.awaitNextDiskTask();
+    }
+
+    void completeDiskTask(DiskTask task, String workerName) {
+        recordEvent("DISK", "serviced request " + task.getRequestId() + " for process " + task.getProcessId());
+        channels.publishCompletedDiskResult(new DiskServiceResult(
+                task.getProcessId(),
+                task.getRequestId(),
+                task.getPreviousHeadBlock(),
+                task.getNewHeadBlock(),
+                task.getTraveledDistance(),
+                workerName));
     }
 
     private boolean sameOptionalValue(String left, String right) {
@@ -1598,305 +1201,120 @@ public final class SimulationCoordinator {
         completion.awaitCompletion();
     }
 
-    private final class SubmitOperationCoordinatorCommand implements CoordinatorCommand {
-
-        private final PreparedOperationCommand command;
-
-        private SubmitOperationCoordinatorCommand(PreparedOperationCommand command) {
-            this.command = command;
+    void enqueueSubmittedOperation(PreparedOperationCommand command) {
+        if (recoveryQuarantineActive) {
+            releaseReservedBlocksForCommand(command);
+            processStore.addCancelledTerminatedProcess(command, "cancelled due to pending crash recovery");
+            recordEvent("CRASH", "cancelled queued operation " + command.getProcessId() + " during recovery quarantine");
+            return;
         }
-
-        @Override
-        public void execute() {
-            if (recoveryQuarantineActive) {
-                releaseReservedBlocksForCommand(command);
-                processStore.addCancelledTerminatedProcess(command, "cancelled due to pending crash recovery");
-                recordEvent("CRASH", "cancelled queued operation " + command.getProcessId() + " during recovery quarantine");
-                return;
-            }
-            pendingSubmissions.enqueue(PendingSubmission.forCommand(command));
-        }
+        pendingSubmissions.enqueue(PendingSubmission.forCommand(command));
     }
 
-    private final class SubmitApplicationIntentCoordinatorCommand implements CoordinatorCommand {
-
-        private final ApplicationOperationIntent intent;
-
-        private SubmitApplicationIntentCoordinatorCommand(ApplicationOperationIntent intent) {
-            this.intent = intent;
-        }
-
-        @Override
-        public void execute() {
-            String requestId = nextRequestId();
-            String processId = nextProcessId();
-            if (recoveryQuarantineActive) {
-                processStore.addCancelledTerminatedProcess(
-                        processId,
-                        requestId,
-                        inferIntentOperationType(intent),
-                        resolveCancelledIntentOwnerUserId(intent),
-                        inferIntentRequiredLockType(intent),
-                        describeIntentTargetPath(intent),
-                        0,
-                        "cancelled due to pending crash recovery");
-                advanceQueuedIntentCancellationState(intent);
-                recordEvent("CRASH", "cancelled queued intent during recovery quarantine");
-                return;
-            }
-            pendingSubmissions.enqueue(PendingSubmission.forIntent(
-                    intent,
+    void enqueueApplicationIntent(ApplicationOperationIntent intent) {
+        String requestId = nextRequestId();
+        String processId = nextProcessId();
+        if (recoveryQuarantineActive) {
+            processStore.addCancelledTerminatedProcess(
+                    processId,
                     requestId,
-                    processId));
+                    inferIntentOperationType(intent),
+                    resolveCancelledIntentOwnerUserId(intent),
+                    inferIntentRequiredLockType(intent),
+                    describeIntentTargetPath(intent),
+                    0,
+                    "cancelled due to pending crash recovery");
+            advanceQueuedIntentCancellationState(intent);
+            recordEvent("CRASH", "cancelled queued intent during recovery quarantine");
+            return;
         }
+        pendingSubmissions.enqueue(PendingSubmission.forIntent(intent, requestId, processId));
     }
 
-    private final class ChangePolicyCoordinatorCommand implements CoordinatorCommand {
-
-        private final DiskSchedulingPolicy policy;
-
-        private ChangePolicyCoordinatorCommand(DiskSchedulingPolicy policy) {
-            this.policy = policy;
+    void applyPolicyChange(DiskSchedulingPolicy policy) {
+        if (ignoreIfRecovering("ignored policy change during recovery quarantine")) {
+            return;
         }
+        activePolicy = policy;
+        recordEvent("SCHEDULER", "disk scheduling policy changed to " + policy.name());
+    }
 
-        @Override
-        public void execute() {
-            if (recoveryQuarantineActive) {
-                recordEvent("CRASH", "ignored policy change during recovery quarantine");
-                return;
+    void applyHeadDirectionChange(DiskHeadDirection direction) {
+        if (ignoreIfRecovering("ignored head direction change during recovery quarantine")) {
+            return;
+        }
+        disk.setHeadDirection(direction);
+    }
+
+    void applyExecutionDelayChange(long delayMillis) {
+        if (ignoreIfRecovering("ignored execution delay change during recovery quarantine")) {
+            return;
+        }
+        executionDelayMillis = delayMillis;
+        recordEvent("PLAYBACK", "execution delay set to " + delayMillis + " ms");
+    }
+
+    void applyStepModeChange(boolean enabled) {
+        if (ignoreIfRecovering("ignored step mode change during recovery quarantine")) {
+            return;
+        }
+        stepModeEnabled = enabled;
+        if (!enabled) {
+            pendingStepPermits = 0;
+        }
+        recordEvent("PLAYBACK", enabled ? "step mode enabled" : "step mode disabled");
+    }
+
+    void queueManualStep() {
+        if (ignoreIfRecovering("ignored step command during recovery quarantine")) {
+            return;
+        }
+        stepModeEnabled = true;
+        pendingStepPermits++;
+        recordEvent("PLAYBACK", "queued manual simulation step");
+    }
+
+    void armSimulatedFailureInternal() {
+        if (ignoreIfRecovering("ignored simulated failure arm during recovery quarantine")) {
+            return;
+        }
+        simulatedFailureArmed = true;
+        recordEvent("CRASH", "simulated failure armed for next successful journaled operation");
+    }
+
+    private void enqueueOperationalCommand(CoordinatorCommand command) {
+        requireStartedAndAcceptingCommands();
+        ensureNotAwaitingRecovery();
+        channels.enqueueCommand(command);
+    }
+
+    private void runSynchronousCommand(CoordinatorCommand command) {
+        requireStartedAndAcceptingCommands();
+        runSynchronously(command);
+    }
+
+    private boolean pendingContains(Predicate<PendingSubmission> matcher) {
+        final boolean[] found = new boolean[] {false};
+        pendingSubmissions.forEach(submission -> {
+            if (!found[0] && matcher.test(submission)) {
+                found[0] = true;
             }
-            activePolicy = policy;
-            recordEvent("SCHEDULER", "disk scheduling policy changed to " + policy.name());
+        });
+        return found[0];
+    }
+
+    private void releaseReservedBlocksForUndoData(JournalUndoData undoData) {
+        if (undoData instanceof CreateFileUndoData createFileUndoData) {
+            applicationState.releaseReservedBlockIndexes(createFileUndoData.getAllocatedBlockIndexesSnapshot());
         }
     }
 
-    private final class ChangeDirectionCoordinatorCommand implements CoordinatorCommand {
-
-        private final DiskHeadDirection direction;
-
-        private ChangeDirectionCoordinatorCommand(DiskHeadDirection direction) {
-            this.direction = direction;
+    private boolean ignoreIfRecovering(String message) {
+        if (!recoveryQuarantineActive) {
+            return false;
         }
-
-        @Override
-        public void execute() {
-            if (recoveryQuarantineActive) {
-                recordEvent("CRASH", "ignored head direction change during recovery quarantine");
-                return;
-            }
-            disk.setHeadDirection(direction);
-        }
+        recordEvent("CRASH", message);
+        return true;
     }
 
-    private final class ChangeExecutionDelayCoordinatorCommand implements CoordinatorCommand {
-
-        private final long delayMillis;
-
-        private ChangeExecutionDelayCoordinatorCommand(long delayMillis) {
-            this.delayMillis = delayMillis;
-        }
-
-        @Override
-        public void execute() {
-            if (recoveryQuarantineActive) {
-                recordEvent("CRASH", "ignored execution delay change during recovery quarantine");
-                return;
-            }
-            executionDelayMillis = delayMillis;
-            recordEvent("PLAYBACK", "execution delay set to " + delayMillis + " ms");
-        }
-    }
-
-    private final class SetStepModeCoordinatorCommand implements CoordinatorCommand {
-
-        private final boolean enabled;
-
-        private SetStepModeCoordinatorCommand(boolean enabled) {
-            this.enabled = enabled;
-        }
-
-        @Override
-        public void execute() {
-            if (recoveryQuarantineActive) {
-                recordEvent("CRASH", "ignored step mode change during recovery quarantine");
-                return;
-            }
-            stepModeEnabled = enabled;
-            if (!enabled) {
-                pendingStepPermits = 0;
-            }
-            recordEvent("PLAYBACK", enabled ? "step mode enabled" : "step mode disabled");
-        }
-    }
-
-    private final class StepSimulationCoordinatorCommand implements CoordinatorCommand {
-
-        @Override
-        public void execute() {
-            if (recoveryQuarantineActive) {
-                recordEvent("CRASH", "ignored step command during recovery quarantine");
-                return;
-            }
-            stepModeEnabled = true;
-            pendingStepPermits++;
-            recordEvent("PLAYBACK", "queued manual simulation step");
-        }
-    }
-
-    private final class SaveSystemCoordinatorCommand implements CoordinatorCommand {
-
-        private final Path path;
-
-        private SaveSystemCoordinatorCommand(Path path) {
-            this.path = path;
-        }
-
-        @Override
-        public void execute() {
-            saveSystemState(path);
-        }
-    }
-
-    private final class LoadSystemCoordinatorCommand implements CoordinatorCommand {
-
-        private final Path path;
-
-        private LoadSystemCoordinatorCommand(Path path) {
-            this.path = path;
-        }
-
-        @Override
-        public void execute() {
-            loadPersistedSystemState(path);
-        }
-    }
-
-    private final class LoadScenarioCoordinatorCommand implements CoordinatorCommand {
-
-        private final Path path;
-
-        private LoadScenarioCoordinatorCommand(Path path) {
-            this.path = path;
-        }
-
-        @Override
-        public void execute() {
-            loadExternalScenario(path);
-        }
-    }
-
-    private final class ArmSimulatedFailureCoordinatorCommand implements CoordinatorCommand {
-
-        @Override
-        public void execute() {
-            if (recoveryQuarantineActive) {
-                recordEvent("CRASH", "ignored simulated failure arm during recovery quarantine");
-                return;
-            }
-            simulatedFailureArmed = true;
-            recordEvent("CRASH", "simulated failure armed for next successful journaled operation");
-        }
-    }
-
-    private final class RecoverPendingJournalCoordinatorCommand implements CoordinatorCommand {
-
-        @Override
-        public void execute() {
-            recoverPendingJournalEntriesInMemory();
-        }
-    }
-
-    private final class ResetSimulationCoordinatorCommand implements CoordinatorCommand {
-
-        private final int totalBlocks;
-
-        private ResetSimulationCoordinatorCommand(int totalBlocks) {
-            this.totalBlocks = totalBlocks;
-        }
-
-        @Override
-        public void execute() {
-            resetSimulationState(totalBlocks);
-        }
-    }
-
-    private static final class CoordinatorCommandCompletion implements CoordinatorCommand {
-
-        private final CoordinatorCommand delegate;
-        private final CountDownLatch completionLatch;
-        private RuntimeException failure;
-
-        private CoordinatorCommandCompletion(CoordinatorCommand delegate) {
-            this.delegate = delegate;
-            this.completionLatch = new CountDownLatch(1);
-            this.failure = null;
-        }
-
-        @Override
-        public void execute() {
-            try {
-                delegate.execute();
-            } catch (RuntimeException exception) {
-                failure = exception;
-            } finally {
-                completionLatch.countDown();
-            }
-        }
-
-        private void awaitCompletion() {
-            boolean interrupted = false;
-            try {
-                while (true) {
-                    try {
-                        completionLatch.await();
-                        break;
-                    } catch (InterruptedException ignored) {
-                        interrupted = true;
-                    }
-                }
-            } finally {
-                if (interrupted) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            if (failure != null) {
-                throw failure;
-            }
-        }
-    }
-
-    private static final class PendingSubmission {
-
-        private final PreparedOperationCommand command;
-        private final ApplicationOperationIntent intent;
-        private final String requestId;
-        private final String processId;
-
-        private PendingSubmission(
-                PreparedOperationCommand command,
-                ApplicationOperationIntent intent,
-                String requestId,
-                String processId) {
-            this.command = command;
-            this.intent = intent;
-            this.requestId = requestId;
-            this.processId = processId;
-        }
-
-        private static PendingSubmission forCommand(PreparedOperationCommand command) {
-            return new PendingSubmission(command, null, null, null);
-        }
-
-        private static PendingSubmission forIntent(
-                ApplicationOperationIntent intent,
-                String requestId,
-                String processId) {
-            return new PendingSubmission(null, intent, requestId, processId);
-        }
-    }
-
-    private record ScenarioReadyRegistration(
-            ProcessControlBlock process,
-            ScenarioOperationIntent intent) {
-    }
 }

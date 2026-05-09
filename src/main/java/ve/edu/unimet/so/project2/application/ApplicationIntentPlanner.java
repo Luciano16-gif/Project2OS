@@ -1,5 +1,6 @@
 package ve.edu.unimet.so.project2.application;
 
+import java.util.ArrayList;
 import ve.edu.unimet.so.project2.coordinator.core.OperationApplyResult;
 import ve.edu.unimet.so.project2.coordinator.core.PreparedJournalData;
 import ve.edu.unimet.so.project2.coordinator.core.PreparedOperationCommand;
@@ -58,22 +59,17 @@ public final class ApplicationIntentPlanner {
             String requestId,
             String processId,
             String actorUserId) {
-        if (intent instanceof CreateFileIntent createFileIntent) {
-            return planCreateFile(createFileIntent, requestId, processId, actorUserId);
-        }
-        if (intent instanceof CreateDirectoryIntent createDirectoryIntent) {
-            return planCreateDirectory(createDirectoryIntent, requestId, processId, actorUserId);
-        }
-        if (intent instanceof ReadIntent readIntent) {
-            return planRead(readIntent, requestId, processId, actorUserId);
-        }
-        if (intent instanceof RenameIntent renameIntent) {
-            return planRename(renameIntent, requestId, processId, actorUserId);
-        }
-        if (intent instanceof DeleteIntent deleteIntent) {
-            return planDelete(deleteIntent, requestId, processId, actorUserId);
-        }
-        throw new IllegalArgumentException("unsupported application intent: " + intent.getClass().getSimpleName());
+        return switch (intent) {
+            case CreateFileIntent createFileIntent ->
+                    planCreateFile(createFileIntent, requestId, processId, actorUserId);
+            case CreateDirectoryIntent createDirectoryIntent ->
+                    planCreateDirectory(createDirectoryIntent, requestId, processId, actorUserId);
+            case ReadIntent readIntent -> planRead(readIntent, requestId, processId, actorUserId);
+            case RenameIntent renameIntent -> planRename(renameIntent, requestId, processId, actorUserId);
+            case DeleteIntent deleteIntent -> planDelete(deleteIntent, requestId, processId, actorUserId);
+            default -> throw new IllegalArgumentException(
+                    "unsupported application intent: " + intent.getClass().getSimpleName());
+        };
     }
 
     private PreparedOperationCommand planCreateFile(
@@ -105,7 +101,7 @@ public final class ApplicationIntentPlanner {
                 actor.getUserId(),
                 "create file " + targetPath);
 
-        return new PreparedOperationCommand(
+        return buildCommand(
                 requestId,
                 processId,
                 actor.getUserId(),
@@ -194,7 +190,7 @@ public final class ApplicationIntentPlanner {
                 actor.getUserId(),
                 "create directory " + targetPath);
 
-        return new PreparedOperationCommand(
+        return buildCommand(
                 requestId,
                 processId,
                 actor.getUserId(),
@@ -244,7 +240,7 @@ public final class ApplicationIntentPlanner {
         User actor = resolveActor(actorUserId);
         permissionService.ensureCanRead(actor, file);
 
-        return new PreparedOperationCommand(
+        return buildCommand(
                 requestId,
                 processId,
                 actor.getUserId(),
@@ -284,7 +280,7 @@ public final class ApplicationIntentPlanner {
                 actor.getUserId(),
                 "rename " + targetNode.getPath());
 
-        return new PreparedOperationCommand(
+        return buildCommand(
                 requestId,
                 processId,
                 actor.getUserId(),
@@ -320,7 +316,7 @@ public final class ApplicationIntentPlanner {
         ensureCanDeleteTargetSubtree(actor, targetNode);
 
         PreparedJournalData journalData = buildDeleteJournalData(actor.getUserId(), targetNode);
-        return new PreparedOperationCommand(
+        return buildCommand(
                 requestId,
                 processId,
                 actor.getUserId(),
@@ -336,35 +332,10 @@ public final class ApplicationIntentPlanner {
     }
 
     private PreparedJournalData buildDeleteJournalData(String actorUserId, FsNode targetNode) {
-        if (targetNode instanceof FileNode file) {
-            DirectoryNode parentDirectory = requireParentDirectory(file);
-            JournalNodeSnapshot nodeSnapshot = buildNodeSnapshot(file);
-            JournalBlockSnapshot[] blockSnapshots = buildFileBlockSnapshots(file);
-            return new PreparedJournalData(
-                    new DeleteFileUndoData(
-                            nodeSnapshot,
-                            parentDirectory.getId(),
-                            parentDirectory.getPath(),
-                            blockSnapshots),
-                    file.getId(),
-                    actorUserId,
-                    "delete file " + file.getPath());
-        }
-
-        FsNode[] subtreeNodes = applicationState.getFileSystemCatalog().getSubtreeSnapshot(targetNode);
-        JournalNodeSnapshot[] nodeSnapshots = buildNodeSnapshots(subtreeNodes);
-        JournalBlockSnapshot[] associatedBlocks = buildAssociatedBlockSnapshots(subtreeNodes);
-        DirectoryNode parentDirectory = requireParentDirectory(targetNode);
-        return new PreparedJournalData(
-                new DeleteDirectoryUndoData(
-                        targetNode.getId(),
-                        parentDirectory.getId(),
-                        parentDirectory.getPath(),
-                        nodeSnapshots,
-                        associatedBlocks),
-                targetNode.getId(),
-                actorUserId,
-                    "delete directory " + targetNode.getPath());
+        return switch (targetNode) {
+            case FileNode file -> buildDeleteFileJournalData(actorUserId, file);
+            default -> buildDeleteDirectoryJournalData(actorUserId, targetNode);
+        };
     }
 
     private void ensureCanDeleteTargetSubtree(User actor, FsNode targetNode) {
@@ -377,19 +348,9 @@ public final class ApplicationIntentPlanner {
     private OperationApplyResult applyDelete(String nodeId) {
         FileSystemCatalog catalog = applicationState.getFileSystemCatalog();
         FsNode targetNode = catalog.requireById(nodeId);
-
-        if (targetNode instanceof FileNode file) {
-            freeFileBlocks(file);
-            catalog.removeNode(file);
-            return OperationApplyResult.success();
-        }
-
-        FsNode[] subtree = catalog.getSubtreeSnapshot(targetNode);
-        for (FsNode node : subtree) {
-            if (node instanceof FileNode file) {
-                freeFileBlocks(file);
-            }
-        }
+        freeAssociatedFileBlocks(targetNode instanceof FileNode file
+                ? new FsNode[] { file }
+                : catalog.getSubtreeSnapshot(targetNode));
         catalog.removeNode(targetNode);
         return OperationApplyResult.success();
     }
@@ -452,35 +413,38 @@ public final class ApplicationIntentPlanner {
     }
 
     private JournalNodeSnapshot buildNodeSnapshot(FsNode node) {
-        if (node instanceof FileNode file) {
-            DirectoryNode parentDirectory = requireParentDirectory(file);
-            return new JournalNodeSnapshot(
-                    file.getId(),
-                    file.getType(),
-                    file.getName(),
-                    file.getOwnerUserId(),
-                    parentDirectory.getId(),
-                    file.getPath(),
-                    file.getPermissions().isPublicReadable(),
-                    file.getSizeInBlocks(),
-                    file.getFirstBlockIndex(),
-                    file.getColorId(),
-                    file.isSystemFile());
-        }
-
-        DirectoryNode directory = requireDirectoryNode(node);
-        return new JournalNodeSnapshot(
-                directory.getId(),
-                directory.getType(),
-                directory.getName(),
-                directory.getOwnerUserId(),
-                directory.isRoot() ? null : directory.getParent().getId(),
-                directory.getPath(),
-                directory.getPermissions().isPublicReadable(),
-                0,
-                JournalNodeSnapshot.NO_BLOCK,
-                null,
-                false);
+        return switch (node) {
+            case FileNode file -> {
+                DirectoryNode parentDirectory = requireParentDirectory(file);
+                yield new JournalNodeSnapshot(
+                        file.getId(),
+                        file.getType(),
+                        file.getName(),
+                        file.getOwnerUserId(),
+                        parentDirectory.getId(),
+                        file.getPath(),
+                        file.getPermissions().isPublicReadable(),
+                        file.getSizeInBlocks(),
+                        file.getFirstBlockIndex(),
+                        file.getColorId(),
+                        file.isSystemFile());
+            }
+            default -> {
+                DirectoryNode directory = requireDirectoryNode(node);
+                yield new JournalNodeSnapshot(
+                        directory.getId(),
+                        directory.getType(),
+                        directory.getName(),
+                        directory.getOwnerUserId(),
+                        directory.isRoot() ? null : directory.getParent().getId(),
+                        directory.getPath(),
+                        directory.getPermissions().isPublicReadable(),
+                        0,
+                        JournalNodeSnapshot.NO_BLOCK,
+                        null,
+                        false);
+            }
+        };
     }
 
     private DirectoryNode requireParentDirectory(FsNode node) {
@@ -507,24 +471,15 @@ public final class ApplicationIntentPlanner {
     }
 
     private JournalBlockSnapshot[] buildAssociatedBlockSnapshots(FsNode[] nodes) {
-        int totalBlocks = 0;
+        ArrayList<JournalBlockSnapshot> snapshots = new ArrayList<>();
         for (FsNode node : nodes) {
             if (node instanceof FileNode file) {
-                totalBlocks += file.getSizeInBlocks();
-            }
-        }
-
-        JournalBlockSnapshot[] snapshots = new JournalBlockSnapshot[totalBlocks];
-        int index = 0;
-        for (FsNode node : nodes) {
-            if (node instanceof FileNode file) {
-                JournalBlockSnapshot[] fileSnapshots = buildFileBlockSnapshots(file);
-                for (JournalBlockSnapshot snapshot : fileSnapshots) {
-                    snapshots[index++] = snapshot;
+                for (JournalBlockSnapshot snapshot : buildFileBlockSnapshots(file)) {
+                    snapshots.add(snapshot);
                 }
             }
         }
-        return snapshots;
+        return snapshots.toArray(JournalBlockSnapshot[]::new);
     }
 
     private JournalBlockSnapshot[] buildFileBlockSnapshots(FileNode file) {
@@ -562,5 +517,69 @@ public final class ApplicationIntentPlanner {
             throw new IllegalArgumentException("actorUserId cannot be blank");
         }
         return applicationState.getUserStore().requireById(actorUserId);
+    }
+
+    private PreparedOperationCommand buildCommand(
+            String requestId,
+            String processId,
+            String ownerUserId,
+            IoOperationType operationType,
+            FsNodeType targetNodeType,
+            String targetPath,
+            String targetNodeId,
+            int targetBlock,
+            int requestedSizeInBlocks,
+            LockType requiredLockType,
+            PreparedJournalData preparedJournalData,
+            ve.edu.unimet.so.project2.coordinator.core.CoordinatorOperationHandler operationHandler) {
+        return new PreparedOperationCommand(
+                requestId,
+                processId,
+                ownerUserId,
+                operationType,
+                targetNodeType,
+                targetPath,
+                targetNodeId,
+                targetBlock,
+                requestedSizeInBlocks,
+                requiredLockType,
+                preparedJournalData,
+                operationHandler);
+    }
+
+    private PreparedJournalData buildDeleteFileJournalData(String actorUserId, FileNode file) {
+        DirectoryNode parentDirectory = requireParentDirectory(file);
+        return new PreparedJournalData(
+                new DeleteFileUndoData(
+                        buildNodeSnapshot(file),
+                        parentDirectory.getId(),
+                        parentDirectory.getPath(),
+                        buildFileBlockSnapshots(file)),
+                file.getId(),
+                actorUserId,
+                "delete file " + file.getPath());
+    }
+
+    private PreparedJournalData buildDeleteDirectoryJournalData(String actorUserId, FsNode targetNode) {
+        FsNode[] subtreeNodes = applicationState.getFileSystemCatalog().getSubtreeSnapshot(targetNode);
+        DirectoryNode parentDirectory = requireParentDirectory(targetNode);
+        return new PreparedJournalData(
+                new DeleteDirectoryUndoData(
+                        targetNode.getId(),
+                        parentDirectory.getId(),
+                        parentDirectory.getPath(),
+                        buildNodeSnapshots(subtreeNodes),
+                        buildAssociatedBlockSnapshots(subtreeNodes)),
+                targetNode.getId(),
+                actorUserId,
+                "delete directory " + targetNode.getPath());
+    }
+
+    private void freeAssociatedFileBlocks(FsNode[] nodes) {
+        for (FsNode node : nodes) {
+            if (node instanceof FileNode file) {
+                freeFileBlocks(file);
+            }
+        }
     }
 }

@@ -1,18 +1,13 @@
 package ve.edu.unimet.so.project2.session;
 
-public final class User {
+public record User(String userId, String username, Role role) {
 
-    private final String userId;
-    private final String username;
-    private final Role role;
-
-    public User(String userId, String username, Role role) {
-        this.userId = requireNonBlank(userId, "userId");
-        this.username = requireNonBlank(username, "username");
+    public User {
+        userId = requireNonBlank(userId, "userId");
+        username = requireNonBlank(username, "username");
         if (role == null) {
             throw new IllegalArgumentException("role cannot be null");
         }
-        this.role = role;
     }
 
     public String getUserId() {

@@ -1,46 +1,24 @@
 package ve.edu.unimet.so.project2.journal.undo;
 
-public final class CreateFileUndoData implements JournalUndoData {
+public record CreateFileUndoData(
+        String createdFileId,
+        String parentDirectoryId,
+        String parentDirectoryPath,
+        int[] allocatedBlockIndexes) implements JournalUndoData {
 
-    private final String createdFileId;
-    private final String parentDirectoryId;
-    private final String parentDirectoryPath;
-    private final int[] allocatedBlockIndexes;
-
-    public CreateFileUndoData(
-            String createdFileId,
-            String parentDirectoryId,
-            String parentDirectoryPath,
-            int[] allocatedBlockIndexes) {
-        this.createdFileId = requireNonBlank(createdFileId, "createdFileId");
-        this.parentDirectoryId = requireNonBlank(parentDirectoryId, "parentDirectoryId");
-        this.parentDirectoryPath = requireNonBlank(parentDirectoryPath, "parentDirectoryPath");
-        this.allocatedBlockIndexes = copyAndValidateBlockIndexes(allocatedBlockIndexes);
+    public CreateFileUndoData {
+        createdFileId = JournalUndoData.requireNonBlank(createdFileId, "createdFileId");
+        parentDirectoryId = JournalUndoData.requireNonBlank(parentDirectoryId, "parentDirectoryId");
+        parentDirectoryPath = JournalUndoData.requireNonBlank(parentDirectoryPath, "parentDirectoryPath");
+        allocatedBlockIndexes = copyAndValidateBlockIndexes(allocatedBlockIndexes);
     }
 
-    public String getCreatedFileId() {
-        return createdFileId;
-    }
-
-    public String getParentDirectoryId() {
-        return parentDirectoryId;
-    }
-
-    public String getParentDirectoryPath() {
-        return parentDirectoryPath;
-    }
-
-    public int getAllocatedBlockCount() {
-        return allocatedBlockIndexes.length;
-    }
-
-    public int getAllocatedBlockIndexAt(int index) {
-        return allocatedBlockIndexes[index];
-    }
-
-    public int[] getAllocatedBlockIndexesSnapshot() {
-        return allocatedBlockIndexes.clone();
-    }
+    public String getCreatedFileId() { return createdFileId; }
+    public String getParentDirectoryId() { return parentDirectoryId; }
+    public String getParentDirectoryPath() { return parentDirectoryPath; }
+    public int getAllocatedBlockCount() { return allocatedBlockIndexes.length; }
+    public int getAllocatedBlockIndexAt(int index) { return allocatedBlockIndexes[index]; }
+    public int[] getAllocatedBlockIndexesSnapshot() { return allocatedBlockIndexes.clone(); }
 
     private static int[] copyAndValidateBlockIndexes(int[] source) {
         if (source == null || source.length == 0) {
@@ -58,12 +36,5 @@ public final class CreateFileUndoData implements JournalUndoData {
             }
         }
         return copy;
-    }
-
-    private static String requireNonBlank(String value, String fieldName) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(fieldName + " cannot be blank");
-        }
-        return value;
     }
 }

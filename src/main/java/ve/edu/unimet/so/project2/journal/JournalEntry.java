@@ -53,57 +53,19 @@ public final class JournalEntry {
         this.description = normalizeOptional(description);
     }
 
-    public String getTransactionId() {
-        return transactionId;
-    }
-
-    public IoOperationType getOperationType() {
-        return operationType;
-    }
-
-    public String getTargetPath() {
-        return targetPath;
-    }
-
-    public JournalStatus getStatus() {
-        return status;
-    }
-
-    public JournalUndoData getUndoData() {
-        return undoData;
-    }
-
-    public String getTargetNodeId() {
-        return targetNodeId;
-    }
-
-    public String getOwnerUserId() {
-        return ownerUserId;
-    }
-
-    public String getDescription() {
-        return description;
-    }
-
-    public boolean isPending() {
-        return status == JournalStatus.PENDING;
-    }
-
-    public boolean isCommitted() {
-        return status == JournalStatus.COMMITTED;
-    }
-
-    public boolean isUndone() {
-        return status == JournalStatus.UNDONE;
-    }
-
-    void markCommitted() {
-        transitionTo(JournalStatus.COMMITTED);
-    }
-
-    void markUndone() {
-        transitionTo(JournalStatus.UNDONE);
-    }
+    public String getTransactionId() { return transactionId; }
+    public IoOperationType getOperationType() { return operationType; }
+    public String getTargetPath() { return targetPath; }
+    public JournalStatus getStatus() { return status; }
+    public JournalUndoData getUndoData() { return undoData; }
+    public String getTargetNodeId() { return targetNodeId; }
+    public String getOwnerUserId() { return ownerUserId; }
+    public String getDescription() { return description; }
+    public boolean isPending() { return status == JournalStatus.PENDING; }
+    public boolean isCommitted() { return status == JournalStatus.COMMITTED; }
+    public boolean isUndone() { return status == JournalStatus.UNDONE; }
+    void markCommitted() { transitionTo(JournalStatus.COMMITTED); }
+    void markUndone() { transitionTo(JournalStatus.UNDONE); }
 
     private void transitionTo(JournalStatus newStatus) {
         if (newStatus == null) {

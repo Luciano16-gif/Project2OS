@@ -12,24 +12,18 @@ import ve.edu.unimet.so.project2.filesystem.FileNode;
 import ve.edu.unimet.so.project2.filesystem.FsNode;
 import ve.edu.unimet.so.project2.process.IoOperationType;
 
-public final class ScenarioOperationIntent implements ApplicationOperationIntent {
-
-    private final int startBlock;
-    private final IoOperationType operationType;
-    private final int sequence;
-    private final String createName;
-    private final Integer createBlocks;
+public record ScenarioOperationIntent(
+        int startBlock,
+        IoOperationType operationType,
+        int sequence,
+        String createName,
+        Integer createBlocks) implements ApplicationOperationIntent {
 
     public ScenarioOperationIntent(int startBlock, IoOperationType operationType, int sequence) {
         this(startBlock, operationType, sequence, null, null);
     }
 
-    public ScenarioOperationIntent(
-            int startBlock,
-            IoOperationType operationType,
-            int sequence,
-            String createName,
-            Integer createBlocks) {
+    public ScenarioOperationIntent {
         if (startBlock < 0) {
             throw new IllegalArgumentException("startBlock cannot be negative");
         }
@@ -39,11 +33,6 @@ public final class ScenarioOperationIntent implements ApplicationOperationIntent
         if (sequence <= 0) {
             throw new IllegalArgumentException("sequence must be positive");
         }
-        this.startBlock = startBlock;
-        this.operationType = operationType;
-        this.sequence = sequence;
-        this.createName = createName;
-        this.createBlocks = createBlocks;
     }
 
     public ApplicationOperationIntent resolve(
@@ -66,17 +55,9 @@ public final class ScenarioOperationIntent implements ApplicationOperationIntent
         };
     }
 
-    public int getStartBlock() {
-        return startBlock;
-    }
-
-    public IoOperationType getOperationType() {
-        return operationType;
-    }
-
-    public int getRequestedSizeInBlocks() {
-        return operationType == IoOperationType.CREATE ? requireCreateBlocks() : 0;
-    }
+    public int getStartBlock() { return startBlock; }
+    public IoOperationType getOperationType() { return operationType; }
+    public int getRequestedSizeInBlocks() { return operationType == IoOperationType.CREATE ? requireCreateBlocks() : 0; }
 
     public String describeTargetPath(
             SimulationApplicationState applicationState,
@@ -104,8 +85,8 @@ public final class ScenarioOperationIntent implements ApplicationOperationIntent
     private FileNode findTargetFile(
             SimulationApplicationState applicationState,
             SimulatedDisk disk) {
-        requireApplicationState(applicationState);
-        requireDisk(disk);
+        requireNonNull(applicationState, "applicationState");
+        requireNonNull(disk, "disk");
         if (!disk.isValidIndex(startBlock)) {
             return null;
         }
@@ -137,18 +118,6 @@ public final class ScenarioOperationIntent implements ApplicationOperationIntent
         return baseName + "-" + suffix;
     }
 
-    private void requireApplicationState(SimulationApplicationState applicationState) {
-        if (applicationState == null) {
-            throw new IllegalArgumentException("applicationState cannot be null");
-        }
-    }
-
-    private void requireDisk(SimulatedDisk disk) {
-        if (disk == null) {
-            throw new IllegalArgumentException("disk cannot be null");
-        }
-    }
-
     private String requireCreateName() {
         if (createName == null || createName.isBlank()) {
             throw new IllegalArgumentException("scenario CREATE request requires a non-blank name");
@@ -161,5 +130,11 @@ public final class ScenarioOperationIntent implements ApplicationOperationIntent
             throw new IllegalArgumentException("scenario CREATE request requires positive blocks");
         }
         return createBlocks;
+    }
+
+    private static void requireNonNull(Object value, String fieldName) {
+        if (value == null) {
+            throw new IllegalArgumentException(fieldName + " cannot be null");
+        }
     }
 }

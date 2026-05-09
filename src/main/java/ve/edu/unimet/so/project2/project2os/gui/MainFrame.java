@@ -5,26 +5,26 @@ import java.awt.*;
 
 public class MainFrame extends JFrame {
 
-    private JButton btnAdmin, btnUser;
-    private JComboBox<String> comboPolicy;
-    private JButton btnPolicyChange;
-    private JButton btnSaveSystem, btnLoadSystem, btnLoadScenario;
-    private JButton btnPlay, btnPause, btnStep;
-    private JButton btnAdvanced;
-    private JComboBox<String> comboPlaybackSpeed;
-    private JLabel lblCycle;
+    JButton btnAdmin, btnUser;
+    JComboBox<String> comboPolicy;
+    JButton btnPolicyChange;
+    JButton btnSaveSystem, btnLoadSystem, btnLoadScenario;
+    JButton btnPlay, btnPause, btnStep;
+    JButton btnAdvanced;
+    JComboBox<String> comboPlaybackSpeed;
+    JLabel lblCycle;
 
-    private JButton btnCreateFile, btnCreateDir, btnRead, btnRename, btnDelete, btnStats;
-    private JButton btnSimularFallo, btnRecovery;
-    private JLabel lblSystemState;
+    JButton btnCreateFile, btnCreateDir, btnRead, btnRename, btnDelete, btnStats;
+    JButton btnSimularFallo, btnRecovery;
+    JLabel lblSystemState;
 
-    private FileSystemTreePanel fileSystemTreePanel;
-    private DiskVisualizationPanel diskVisualizationPanel;
-    private ProcessQueuePanel processQueuePanel;
-    private JournalPanel journalPanel;
-    private EventLogPanel eventLogPanel;
+    FileSystemTreePanel fileSystemTreePanel;
+    DiskVisualizationPanel diskVisualizationPanel;
+    ProcessQueuePanel processQueuePanel;
+    JournalPanel journalPanel;
+    EventLogPanel eventLogPanel;
 
-    private JLabel lblStatusLeft, lblStatusCenter, lblStatusRight;
+    JLabel lblStatusLeft, lblStatusCenter, lblStatusRight;
 
     public MainFrame() {
         setTitle("Simulador de Sistema de Archivos - SO 2425-2");
@@ -196,37 +196,4 @@ public class MainFrame extends JFrame {
 
         btnClearLog.addActionListener(e -> eventLogPanel.clearLog());
     }
-
-    public JButton getBtnAdmin() { return btnAdmin; }
-    public JButton getBtnUser() { return btnUser; }
-    public JComboBox<String> getComboPolicy() { return comboPolicy; }
-    public JButton getBtnPolicyChange() { return btnPolicyChange; }
-    public JButton getBtnSaveSystem() { return btnSaveSystem; }
-    public JButton getBtnLoadSystem() { return btnLoadSystem; }
-    public JButton getBtnLoadScenario() { return btnLoadScenario; }
-    public JButton getBtnPlay() { return btnPlay; }
-    public JButton getBtnPause() { return btnPause; }
-    public JButton getBtnStep() { return btnStep; }
-    public JButton getBtnAdvanced() { return btnAdvanced; }
-    public JComboBox<String> getComboPlaybackSpeed() { return comboPlaybackSpeed; }
-    public JLabel getLblCycle() { return lblCycle; }
-    public JButton getBtnCreateFile() { return btnCreateFile; }
-    public JButton getBtnCreateDir() { return btnCreateDir; }
-    public JButton getBtnRead() { return btnRead; }
-    public JButton getBtnRename() { return btnRename; }
-    public JButton getBtnDelete() { return btnDelete; }
-    public JButton getBtnStats() { return btnStats; }
-    public JButton getBtnSimularFallo() { return btnSimularFallo; }
-    public JButton getBtnRecovery() { return btnRecovery; }
-    public JLabel getLblSystemState() { return lblSystemState; }
-
-    public FileSystemTreePanel getFileSystemTreePanel() { return fileSystemTreePanel; }
-    public DiskVisualizationPanel getDiskVisualizationPanel() { return diskVisualizationPanel; }
-    public ProcessQueuePanel getProcessQueuePanel() { return processQueuePanel; }
-    public JournalPanel getJournalPanel() { return journalPanel; }
-    public EventLogPanel getEventLogPanel() { return eventLogPanel; }
-
-    public JLabel getLblStatusLeft() { return lblStatusLeft; }
-    public JLabel getLblStatusCenter() { return lblStatusCenter; }
-    public JLabel getLblStatusRight() { return lblStatusRight; }
 }

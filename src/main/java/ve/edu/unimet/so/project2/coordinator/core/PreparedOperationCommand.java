@@ -10,45 +10,32 @@ import ve.edu.unimet.so.project2.journal.undo.UpdateRenameUndoData;
 import ve.edu.unimet.so.project2.locking.LockType;
 import ve.edu.unimet.so.project2.process.IoOperationType;
 
-public final class PreparedOperationCommand {
+public record PreparedOperationCommand(
+        String requestId,
+        String processId,
+        String ownerUserId,
+        IoOperationType operationType,
+        FsNodeType targetNodeType,
+        String targetPath,
+        String targetNodeId,
+        int targetBlock,
+        int requestedSizeInBlocks,
+        LockType requiredLockType,
+        PreparedJournalData preparedJournalData,
+        CoordinatorOperationHandler operationHandler) {
 
-    private final String requestId;
-    private final String processId;
-    private final String ownerUserId;
-    private final IoOperationType operationType;
-    private final FsNodeType targetNodeType;
-    private final String targetPath;
-    private final String targetNodeId;
-    private final int targetBlock;
-    private final int requestedSizeInBlocks;
-    private final LockType requiredLockType;
-    private final PreparedJournalData preparedJournalData;
-    private final CoordinatorOperationHandler operationHandler;
-
-    public PreparedOperationCommand(
-            String requestId,
-            String processId,
-            String ownerUserId,
-            IoOperationType operationType,
-            FsNodeType targetNodeType,
-            String targetPath,
-            String targetNodeId,
-            int targetBlock,
-            int requestedSizeInBlocks,
-            LockType requiredLockType,
-            PreparedJournalData preparedJournalData,
-            CoordinatorOperationHandler operationHandler) {
-        this.requestId = requireNonBlank(requestId, "requestId");
-        this.processId = requireNonBlank(processId, "processId");
-        this.ownerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+    public PreparedOperationCommand {
+        requestId = requireNonBlank(requestId, "requestId");
+        processId = requireNonBlank(processId, "processId");
+        ownerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+        targetPath = requireNonBlank(targetPath, "targetPath");
+        targetNodeId = normalizeOptional(targetNodeId);
         if (operationType == null) {
             throw new IllegalArgumentException("operationType cannot be null");
         }
         if (targetNodeType == null) {
             throw new IllegalArgumentException("targetNodeType cannot be null");
         }
-        this.targetPath = requireNonBlank(targetPath, "targetPath");
-        this.targetNodeId = normalizeOptional(targetNodeId);
         if (targetBlock < 0) {
             throw new IllegalArgumentException("targetBlock cannot be negative");
         }
@@ -58,16 +45,7 @@ public final class PreparedOperationCommand {
         if (operationHandler == null) {
             throw new IllegalArgumentException("operationHandler cannot be null");
         }
-
-        this.operationType = operationType;
-        this.targetNodeType = targetNodeType;
-        this.targetBlock = targetBlock;
-        this.requestedSizeInBlocks = requestedSizeInBlocks;
-        this.requiredLockType = requiredLockType;
-        this.preparedJournalData = preparedJournalData;
-        this.operationHandler = operationHandler;
-
-        validateTargetBinding(operationType, this.targetNodeId);
+        validateTargetBinding(operationType, targetNodeId);
         validateJournalRequirement(operationType, preparedJournalData);
     }
 

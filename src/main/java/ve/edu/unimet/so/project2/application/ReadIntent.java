@@ -1,21 +1,10 @@
 package ve.edu.unimet.so.project2.application;
 
-public final class ReadIntent implements ApplicationOperationIntent {
+public record ReadIntent(String targetPath) implements ApplicationOperationIntent {
 
-    private final String targetPath;
-
-    public ReadIntent(String targetPath) {
-        this.targetPath = requireNonBlank(targetPath, "targetPath");
+    public ReadIntent {
+        targetPath = ApplicationOperationIntent.requireNonBlank(targetPath, "targetPath");
     }
 
-    public String getTargetPath() {
-        return targetPath;
-    }
-
-    private static String requireNonBlank(String value, String fieldName) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(fieldName + " cannot be blank");
-        }
-        return value;
-    }
+    public String getTargetPath() { return targetPath; }
 }

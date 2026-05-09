@@ -1,23 +1,17 @@
 package ve.edu.unimet.so.project2.coordinator.channel;
 
-public final class DiskServiceResult {
+public record DiskServiceResult(
+        String processId,
+        String requestId,
+        int previousHeadBlock,
+        int newHeadBlock,
+        int traveledDistance,
+        String serviceThreadName) {
 
-    private final String processId;
-    private final String requestId;
-    private final int previousHeadBlock;
-    private final int newHeadBlock;
-    private final int traveledDistance;
-    private final String serviceThreadName;
-
-    public DiskServiceResult(
-            String processId,
-            String requestId,
-            int previousHeadBlock,
-            int newHeadBlock,
-            int traveledDistance,
-            String serviceThreadName) {
-        this.processId = requireNonBlank(processId, "processId");
-        this.requestId = requireNonBlank(requestId, "requestId");
+    public DiskServiceResult {
+        processId = requireNonBlank(processId, "processId");
+        requestId = requireNonBlank(requestId, "requestId");
+        serviceThreadName = requireNonBlank(serviceThreadName, "serviceThreadName");
         if (previousHeadBlock < 0) {
             throw new IllegalArgumentException("previousHeadBlock cannot be negative");
         }
@@ -27,10 +21,6 @@ public final class DiskServiceResult {
         if (traveledDistance < 0) {
             throw new IllegalArgumentException("traveledDistance cannot be negative");
         }
-        this.previousHeadBlock = previousHeadBlock;
-        this.newHeadBlock = newHeadBlock;
-        this.traveledDistance = traveledDistance;
-        this.serviceThreadName = requireNonBlank(serviceThreadName, "serviceThreadName");
     }
 
     public String getProcessId() {

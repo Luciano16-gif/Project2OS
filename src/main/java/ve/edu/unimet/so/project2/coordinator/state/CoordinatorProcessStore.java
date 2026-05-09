@@ -125,9 +125,10 @@ public final class CoordinatorProcessStore {
 
     public void addRejectedTerminatedProcess(PreparedOperationCommand command, String errorMessage) {
         discardContext(command.getProcessId(), command.getRequestId());
-        terminatedProcesses.add(buildRejectedProcessSnapshot(
+        terminatedProcesses.add(buildTerminalProcessSnapshot(
                 command.getProcessId(),
                 command.getRequestId(),
+                ResultStatus.FAILED,
                 command.getOperationType(),
                 command.getOwnerUserId(),
                 command.getRequiredLockType(),
@@ -138,9 +139,10 @@ public final class CoordinatorProcessStore {
 
     public void addCancelledTerminatedProcess(PreparedOperationCommand command, String errorMessage) {
         discardContext(command.getProcessId(), command.getRequestId());
-        terminatedProcesses.add(buildCancelledProcessSnapshot(
+        terminatedProcesses.add(buildTerminalProcessSnapshot(
                 command.getProcessId(),
                 command.getRequestId(),
+                ResultStatus.CANCELLED,
                 command.getOperationType(),
                 command.getOwnerUserId(),
                 command.getRequiredLockType(),
@@ -168,9 +170,10 @@ public final class CoordinatorProcessStore {
             int targetBlock,
             String errorMessage) {
         discardContext(processId, requestId);
-        terminatedProcesses.add(buildRejectedProcessSnapshot(
+        terminatedProcesses.add(buildTerminalProcessSnapshot(
                 processId,
                 requestId,
+                ResultStatus.FAILED,
                 operationType,
                 ownerUserId,
                 requiredLockType,
@@ -189,9 +192,10 @@ public final class CoordinatorProcessStore {
             int targetBlock,
             String errorMessage) {
         discardContext(processId, requestId);
-        terminatedProcesses.add(buildCancelledProcessSnapshot(
+        terminatedProcesses.add(buildTerminalProcessSnapshot(
                 processId,
                 requestId,
+                ResultStatus.CANCELLED,
                 operationType,
                 ownerUserId,
                 requiredLockType,
@@ -359,9 +363,10 @@ public final class CoordinatorProcessStore {
                 process.getErrorMessage());
     }
 
-    private SimulationSnapshot.ProcessSnapshot buildRejectedProcessSnapshot(
+    private SimulationSnapshot.ProcessSnapshot buildTerminalProcessSnapshot(
             String processId,
             String requestId,
+            ResultStatus resultStatus,
             ve.edu.unimet.so.project2.process.IoOperationType operationType,
             String ownerUserId,
             ve.edu.unimet.so.project2.locking.LockType requiredLockType,
@@ -373,47 +378,24 @@ public final class CoordinatorProcessStore {
                 requestId,
                 ProcessState.TERMINATED,
                 WaitReason.NONE,
-                ResultStatus.FAILED,
+                resultStatus,
                 operationType,
                 ownerUserId,
                 toLockTypeSummary(requiredLockType),
                 targetPath,
                 targetBlock,
                 null,
-                normalizeErrorMessage(errorMessage));
-    }
-
-    private SimulationSnapshot.ProcessSnapshot buildCancelledProcessSnapshot(
-            String processId,
-            String requestId,
-            ve.edu.unimet.so.project2.process.IoOperationType operationType,
-            String ownerUserId,
-            ve.edu.unimet.so.project2.locking.LockType requiredLockType,
-            String targetPath,
-            int targetBlock,
-            String errorMessage) {
-        return new SimulationSnapshot.ProcessSnapshot(
-                processId,
-                requestId,
-                ProcessState.TERMINATED,
-                WaitReason.NONE,
-                ResultStatus.CANCELLED,
-                operationType,
-                ownerUserId,
-                toLockTypeSummary(requiredLockType),
-                targetPath,
-                targetBlock,
-                null,
-                normalizeCancelledMessage(errorMessage));
+                normalizeTerminalMessage(resultStatus, errorMessage));
     }
 
     private void cancelProcessesIn(Object[] source, String errorMessage) {
         for (Object object : source) {
             ProcessControlBlock process = (ProcessControlBlock) object;
             discardContext(process.getProcessId(), process.getRequest().getRequestId());
-            terminatedProcesses.add(buildCancelledProcessSnapshot(
+            terminatedProcesses.add(buildTerminalProcessSnapshot(
                     process.getProcessId(),
                     process.getRequest().getRequestId(),
+                    ResultStatus.CANCELLED,
                     process.getRequest().getOperationType(),
                     process.getOwnerUserId(),
                     process.getRequiredLockType(),
@@ -447,19 +429,14 @@ public final class CoordinatorProcessStore {
         }
     }
 
-    private String normalizeErrorMessage(String errorMessage) {
+    private String normalizeTerminalMessage(ResultStatus resultStatus, String errorMessage) {
+        String defaultMessage = resultStatus == ResultStatus.CANCELLED
+                ? "cancelled operation"
+                : "rejected operation";
         if (errorMessage == null) {
-            return "rejected operation";
+            return defaultMessage;
         }
         String normalized = errorMessage.trim();
-        return normalized.isEmpty() ? "rejected operation" : normalized;
-    }
-
-    private String normalizeCancelledMessage(String errorMessage) {
-        if (errorMessage == null) {
-            return "cancelled operation";
-        }
-        String normalized = errorMessage.trim();
-        return normalized.isEmpty() ? "cancelled operation" : normalized;
+        return normalized.isEmpty() ? defaultMessage : normalized;
     }
 }

@@ -1,5 +1,9 @@
 package ve.edu.unimet.so.project2.project2os.gui;
 
+import java.awt.GraphicsEnvironment;
+import java.lang.reflect.InvocationTargetException;
+import java.util.function.BooleanSupplier;
+import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,11 +15,6 @@ import ve.edu.unimet.so.project2.disk.SimulatedDisk;
 import ve.edu.unimet.so.project2.journal.JournalManager;
 import ve.edu.unimet.so.project2.locking.LockTable;
 import ve.edu.unimet.so.project2.scheduler.DiskSchedulingPolicy;
-
-import javax.swing.SwingUtilities;
-import java.awt.GraphicsEnvironment;
-import java.lang.reflect.InvocationTargetException;
-import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -45,7 +44,7 @@ class GuiControllerSmokeTest {
     @AfterEach
     void tearDown() {
         if (mainFrame != null) {
-            onEdt(() -> mainFrame.dispose());
+            onEdt(mainFrame::dispose);
         }
         if (coordinator != null) {
             coordinator.shutdown();
@@ -54,40 +53,40 @@ class GuiControllerSmokeTest {
 
     @Test
     void playbackButtonsToggleManualMode() {
-        onEdt(() -> mainFrame.getBtnPause().doClick());
+        onEdt(() -> mainFrame.btnPause.doClick());
         waitForCondition(() -> coordinator.isStepModeEnabled(), "pause should enable manual mode");
 
-        onEdt(() -> mainFrame.getBtnPlay().doClick());
+        onEdt(() -> mainFrame.btnPlay.doClick());
         waitForCondition(() -> !coordinator.isStepModeEnabled(), "play should disable manual mode");
 
-        onEdt(() -> mainFrame.getBtnStep().doClick());
+        onEdt(() -> mainFrame.btnStep.doClick());
         waitForCondition(coordinator::isStepModeEnabled, "step should force manual mode");
     }
 
     @Test
     void speedSelectorUpdatesCoordinatorDelay() {
-        onEdt(() -> mainFrame.getComboPlaybackSpeed().setSelectedItem("Rápido (100ms)"));
+        onEdt(() -> mainFrame.comboPlaybackSpeed.setSelectedIndex(1));
         waitForCondition(() -> coordinator.getExecutionDelayMillis() == 100L, "fast preset should set 100ms delay");
 
-        onEdt(() -> mainFrame.getComboPlaybackSpeed().setSelectedItem("Lento (1 Seg)"));
+        onEdt(() -> mainFrame.comboPlaybackSpeed.setSelectedIndex(3));
         waitForCondition(() -> coordinator.getExecutionDelayMillis() == 1000L, "slow preset should set 1000ms delay");
 
-        onEdt(() -> mainFrame.getComboPlaybackSpeed().setSelectedItem("Instantáneo"));
+        onEdt(() -> mainFrame.comboPlaybackSpeed.setSelectedIndex(0));
         waitForCondition(() -> coordinator.getExecutionDelayMillis() == 0L, "instant preset should set 0ms delay");
     }
 
     @Test
     void policyAndSessionButtonsDispatchCoordinatorCommands() {
         onEdt(() -> {
-            mainFrame.getComboPolicy().setSelectedItem("C_SCAN");
-            mainFrame.getBtnPolicyChange().doClick();
+            mainFrame.comboPolicy.setSelectedItem("C_SCAN");
+            mainFrame.btnPolicyChange.doClick();
         });
         waitForCondition(() -> {
             SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
             return snapshot != null && snapshot.getPolicy() == DiskSchedulingPolicy.C_SCAN;
         }, "policy button should update coordinator policy");
 
-        onEdt(() -> mainFrame.getBtnAdmin().doClick());
+        onEdt(() -> mainFrame.btnAdmin.doClick());
         waitForCondition(() -> {
             SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
             return snapshot != null
@@ -96,7 +95,7 @@ class GuiControllerSmokeTest {
                     && "ADMIN".equals(snapshot.getSessionSummary().getCurrentRole().name());
         }, "admin button should switch to ADMIN session");
 
-        onEdt(() -> mainFrame.getBtnUser().doClick());
+        onEdt(() -> mainFrame.btnUser.doClick());
         waitForCondition(() -> {
             SimulationSnapshot snapshot = coordinator.getLatestSnapshot();
             return snapshot != null

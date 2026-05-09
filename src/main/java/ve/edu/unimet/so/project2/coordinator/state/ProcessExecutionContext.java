@@ -13,17 +13,8 @@ public final class ProcessExecutionContext {
     private String transactionId;
 
     public ProcessExecutionContext(ProcessControlBlock process, PreparedOperationCommand command) {
-        if (process == null) {
-            throw new IllegalArgumentException("process cannot be null");
-        }
-        if (command == null) {
-            throw new IllegalArgumentException("command cannot be null");
-        }
-        this.process = process;
-        this.command = command;
-        this.deferredIntent = null;
-        this.deferredActorUserId = null;
-        this.transactionId = null;
+        this.process = requireNonNull(process, "process");
+        this.command = requireNonNull(command, "command");
     }
 
     public ProcessExecutionContext(ProcessControlBlock process, ApplicationOperationIntent deferredIntent) {
@@ -34,22 +25,13 @@ public final class ProcessExecutionContext {
             ProcessControlBlock process,
             ApplicationOperationIntent deferredIntent,
             String deferredActorUserId) {
-        if (process == null) {
-            throw new IllegalArgumentException("process cannot be null");
-        }
-        if (deferredIntent == null) {
-            throw new IllegalArgumentException("deferredIntent cannot be null");
-        }
-        this.process = process;
+        this.process = requireNonNull(process, "process");
         this.command = null;
-        this.deferredIntent = deferredIntent;
+        this.deferredIntent = requireNonNull(deferredIntent, "deferredIntent");
         this.deferredActorUserId = deferredActorUserId;
-        this.transactionId = null;
     }
 
-    public ProcessControlBlock getProcess() {
-        return process;
-    }
+    public ProcessControlBlock getProcess() { return process; }
 
     public PreparedOperationCommand getCommand() {
         if (command == null) {
@@ -58,9 +40,7 @@ public final class ProcessExecutionContext {
         return command;
     }
 
-    public boolean hasDeferredIntent() {
-        return deferredIntent != null;
-    }
+    public boolean hasDeferredIntent() { return deferredIntent != null; }
 
     public ApplicationOperationIntent getDeferredIntent() {
         if (deferredIntent == null) {
@@ -69,28 +49,22 @@ public final class ProcessExecutionContext {
         return deferredIntent;
     }
 
-    public String getDeferredActorUserId() {
-        return deferredActorUserId;
-    }
+    public String getDeferredActorUserId() { return deferredActorUserId; }
 
     public void resolveDeferredIntent(ProcessControlBlock process, PreparedOperationCommand command) {
-        if (process == null) {
-            throw new IllegalArgumentException("process cannot be null");
-        }
-        if (command == null) {
-            throw new IllegalArgumentException("command cannot be null");
-        }
-        this.process = process;
-        this.command = command;
+        this.process = requireNonNull(process, "process");
+        this.command = requireNonNull(command, "command");
         this.deferredIntent = null;
         this.deferredActorUserId = null;
     }
 
-    public String getTransactionId() {
-        return transactionId;
-    }
+    public String getTransactionId() { return transactionId; }
+    public void setTransactionId(String transactionId) { this.transactionId = transactionId; }
 
-    public void setTransactionId(String transactionId) {
-        this.transactionId = transactionId;
+    private static <T> T requireNonNull(T value, String fieldName) {
+        if (value == null) {
+            throw new IllegalArgumentException(fieldName + " cannot be null");
+        }
+        return value;
     }
 }

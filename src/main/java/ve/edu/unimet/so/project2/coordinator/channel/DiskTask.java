@@ -1,21 +1,15 @@
 package ve.edu.unimet.so.project2.coordinator.channel;
 
-public final class DiskTask {
+public record DiskTask(
+        String processId,
+        String requestId,
+        int previousHeadBlock,
+        int newHeadBlock,
+        int traveledDistance) {
 
-    private final String processId;
-    private final String requestId;
-    private final int previousHeadBlock;
-    private final int newHeadBlock;
-    private final int traveledDistance;
-
-    public DiskTask(
-            String processId,
-            String requestId,
-            int previousHeadBlock,
-            int newHeadBlock,
-            int traveledDistance) {
-        this.processId = requireNonBlank(processId, "processId");
-        this.requestId = requireNonBlank(requestId, "requestId");
+    public DiskTask {
+        processId = requireNonBlank(processId, "processId");
+        requestId = requireNonBlank(requestId, "requestId");
         if (previousHeadBlock < 0) {
             throw new IllegalArgumentException("previousHeadBlock cannot be negative");
         }
@@ -25,9 +19,6 @@ public final class DiskTask {
         if (traveledDistance < 0) {
             throw new IllegalArgumentException("traveledDistance cannot be negative");
         }
-        this.previousHeadBlock = previousHeadBlock;
-        this.newHeadBlock = newHeadBlock;
-        this.traveledDistance = traveledDistance;
     }
 
     public String getProcessId() {
